@@ -68,6 +68,11 @@ impl Page {
     /// HINT: To convert a variable x to bytes using little endian, use
     /// x.to_le_bytes()
     pub fn new(page_id: PageId) -> Self {
+
+        // Convert page_id into a small endian format
+
+        // Check that the field of page_id is smaller or equal to 4 bytes 
+
         panic!("TODO milestone pg");
     }
 
