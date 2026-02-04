@@ -120,7 +120,7 @@ impl Page {
     /// Returns:
     /// * `PageId` - the page id
     pub fn get_page_id(&self) -> PageId {
-        panic!("TODO milestone pg");
+        PageId::from_le_bytes(self.data[0..PAGE_ID_SIZE].try_into().unwrap())
     }
 
     /// Set the page id for a page
@@ -149,7 +149,13 @@ impl Page {
     /// Returns:
     /// * `Lsn` - the LSN for the page
     pub fn get_lsn(&self) -> Lsn {
-        panic!("TODO milestone pg");
+        let page_id = PageId::from_le_bytes(
+            self.data[LSN_PAGE_OFFSET..LSN_PAGE_OFFSET + PAGE_ID_SIZE].try_into().unwrap(),
+        );
+        let slot_id = SlotId::from_le_bytes(
+            self.data[LSN_SLOT_OFFSET..LSN_SLOT_OFFSET + SLOT_ID_SIZE].try_into().unwrap(),
+        );
+        Lsn::new(page_id, slot_id)
     }
 
     /// Set the LSN for the page. The LSN is a log sequence number that is used to
@@ -175,7 +181,9 @@ impl Page {
     /// Returns:
     /// * `CheckSum` - the checksum for the page
     pub fn get_checksum(&self) -> CheckSum {
-        panic!("TODO milestone pg");
+        CheckSum::from_le_bytes(
+            self.data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE].try_into().unwrap(),
+        )
     }
 
     /// Set the checksum for the page. The checksum is used to verify the integrity of the page.
