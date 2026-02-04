@@ -105,7 +105,7 @@ impl Page {
 
     /// Create a new empty page
     pub fn new_empty() -> Self {
-        panic!("TODO milestone pg");
+        Self::new(0)
     }
 
     /// Return the page id for a page
