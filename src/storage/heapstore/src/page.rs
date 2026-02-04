@@ -1,4 +1,5 @@
 pub use crate::heap_page::HeapPage;
+use crate::heap_page::HEAP_PAGE_FIXED_METADATA_SIZE;
 use common::ids::CheckSum;
 use common::prelude::*;
 use common::PAGE_SIZE;
@@ -69,11 +70,37 @@ impl Page {
     /// x.to_le_bytes()
     pub fn new(page_id: PageId) -> Self {
 
-        // Convert page_id into a small endian format
+        // Note - though by definition we are passing page_id to be of the size PrageId,
+        // we are still checking that the size is appropriate in case the implementation
+        // changes at any point in the future
+        assert!(common::fits_in_type::<[u8; PAGE_ID_SIZE], _>(&page_id));
 
-        // Check that the field of page_id is smaller or equal to 4 bytes 
+        // 1 - PageId (4 bytes)
+        let page_id_bytes: [u8; _] = page_id.to_le_bytes();
+        let mut data: [u8; 4096] = [0u8; PAGE_SIZE];
+        data[..PAGE_ID_SIZE].copy_from_slice(&page_id_bytes);
 
-        panic!("TODO milestone pg");
+        // 2 - LSN is two components: PageId (4 bytes) + SlotId (2 bytes), both default to 0
+        let lsn_page: PageId = 0;
+        let lsn_slot: SlotId = 0;
+        data[LSN_PAGE_OFFSET..LSN_PAGE_OFFSET + PAGE_ID_SIZE].copy_from_slice(&lsn_page.to_le_bytes());
+        data[LSN_SLOT_OFFSET..LSN_SLOT_OFFSET + SLOT_ID_SIZE].copy_from_slice(&lsn_slot.to_le_bytes());
+
+        // 3 - Checksum (2 bytes). Defaults to 0
+        let checksum: CheckSum = 0;
+        data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE].copy_from_slice(&checksum.to_le_bytes());
+
+        // 4 - Spare bytes to fill the fixed header to PAGE_FIXED_HEADER_LEN (16 bytes)
+        let spare_offset = CHECKSUM_OFFSET + CHECKSUM_SIZE;
+        let spare_bytes = [0u8; PAGE_FIXED_HEADER_LEN - (CHECKSUM_OFFSET + CHECKSUM_SIZE)];
+        data[spare_offset..PAGE_FIXED_HEADER_LEN].copy_from_slice(&spare_bytes);
+
+        // 5 - Heap page metadata (8 bytes)
+        let heap_meta = [0u8; HEAP_PAGE_FIXED_METADATA_SIZE];
+        data[PAGE_FIXED_HEADER_LEN..PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE]
+            .copy_from_slice(&heap_meta);
+
+        Page { data }
     }
 
     /// Create a new empty page
