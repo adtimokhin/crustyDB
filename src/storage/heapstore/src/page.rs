@@ -135,7 +135,7 @@ impl Page {
     /// * `&self` - a mutable reference to the page
     /// * `page_id` - the page id to set
     pub fn set_page_id(&mut self, page_id: PageId) {
-        panic!("TODO milestone pg");
+        self.data[0..PAGE_ID_SIZE].copy_from_slice(&page_id.to_le_bytes());
     }
 
     /// Get the LSN for the page. The LSN is a log sequence number that is used to
@@ -169,7 +169,13 @@ impl Page {
     /// * `&self` - a mutable reference to the page
     /// * `lsn` - the LSN to set
     pub fn set_lsn(&mut self, lsn: Lsn) {
-        panic!("TODO milestone pg");
+        let current = self.get_lsn();
+        if lsn > current {
+            self.data[LSN_PAGE_OFFSET..LSN_PAGE_OFFSET + PAGE_ID_SIZE]
+                .copy_from_slice(&lsn.page_id.to_le_bytes());
+            self.data[LSN_SLOT_OFFSET..LSN_SLOT_OFFSET + SLOT_ID_SIZE]
+                .copy_from_slice(&lsn.slot_id.to_le_bytes());
+        }
     }
 
     /// Get the checksum for the page. The checksum is used to verify the integrity of the page.
@@ -193,7 +199,18 @@ impl Page {
     /// Arguments:
     /// * `&self` - a mutable reference to the page
     pub fn set_checksum(&mut self) {
-        panic!("TODO milestone pg");
+        // Zero out the checksum field before computing
+        self.data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE].copy_from_slice(&[0u8; CHECKSUM_SIZE]);
+
+        // Hash the full page bytes
+        let mut hasher = std::hash::DefaultHasher::new();
+        hasher.write(&self.data[..]);
+        let checksum_64 = hasher.finish();
+        let checksum = (checksum_64 & 0xFFFF) as u16;
+
+        // Write the checksum back
+        self.data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE]
+            .copy_from_slice(&checksum.to_le_bytes());
     }
 
     /// Create a page from a byte array
