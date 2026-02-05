@@ -62,7 +62,6 @@ pub trait HeapPage {
     /// Increment the total number of slots by 1 and return the new count.
     fn increment_num_slots(&mut self) -> u16;
 
-
     /// Get the free space pointer. This points to the start of free space in the data area
     /// (relative to the Deref start).
     fn get_free_space_ptr(&self) -> u16;
@@ -159,7 +158,11 @@ impl HeapPage for Page {
     ///                         Helper Functions
     ////////////////////////////////////////////////////////////////////////////
     fn get_num_slots(&self) -> u16 {
-        u16::from_le_bytes(self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE].try_into().unwrap())
+        u16::from_le_bytes(
+            self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     fn set_num_slots(&mut self, num_slots: u16) {
@@ -174,7 +177,11 @@ impl HeapPage for Page {
     }
 
     fn get_free_space_ptr(&self) -> u16 {
-        u16::from_le_bytes(self[FREE_SPACE_PTR_OFFSET..FREE_SPACE_PTR_OFFSET + FREE_SPACE_PTR_SIZE].try_into().unwrap())
+        u16::from_le_bytes(
+            self[FREE_SPACE_PTR_OFFSET..FREE_SPACE_PTR_OFFSET + FREE_SPACE_PTR_SIZE]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     fn set_free_space_ptr(&mut self, ptr: u16) {
@@ -183,7 +190,11 @@ impl HeapPage for Page {
     }
 
     fn get_deleted_bytes(&self) -> u16 {
-        u16::from_le_bytes(self[DELETED_BYTES_OFFSET..DELETED_BYTES_OFFSET + DELETED_BYTES_SIZE].try_into().unwrap())
+        u16::from_le_bytes(
+            self[DELETED_BYTES_OFFSET..DELETED_BYTES_OFFSET + DELETED_BYTES_SIZE]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     fn set_deleted_bytes(&mut self, bytes: u16) {
@@ -192,7 +203,11 @@ impl HeapPage for Page {
     }
 
     fn get_deleted_slot_count(&self) -> u16 {
-        u16::from_le_bytes(self[DELETED_SLOT_COUNT_OFFSET..DELETED_SLOT_COUNT_OFFSET + DELETED_SLOT_COUNT_SIZE].try_into().unwrap())
+        u16::from_le_bytes(
+            self[DELETED_SLOT_COUNT_OFFSET..DELETED_SLOT_COUNT_OFFSET + DELETED_SLOT_COUNT_SIZE]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     fn set_deleted_slot_count(&mut self, count: u16) {
@@ -224,7 +239,9 @@ impl HeapPage for Page {
         if (slot_id as usize) >= num_slots {
             return -1;
         }
-        (PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE + (slot_id as usize) * SLOT_METADATA_SIZE) as isize
+        (PAGE_FIXED_HEADER_LEN
+            + HEAP_PAGE_FIXED_METADATA_SIZE
+            + (slot_id as usize) * SLOT_METADATA_SIZE) as isize
     }
 
     fn compact_page(&mut self) {
@@ -246,7 +263,10 @@ impl HeapPage for Page {
                     .unwrap(),
             ) as usize;
             if data_length > 0 {
-                live_slots.push((i, self.data[data_offset..data_offset + data_length].to_vec()));
+                live_slots.push((
+                    i,
+                    self.data[data_offset..data_offset + data_length].to_vec(),
+                ));
             }
         }
 
@@ -325,7 +345,8 @@ impl HeapPage for Page {
         }
 
         // 4. Compute slot_id
-        let slot_id = ((slot_offset - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE) / SLOT_METADATA_SIZE) as SlotId;
+        let slot_id = ((slot_offset - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE)
+            / SLOT_METADATA_SIZE) as SlotId;
 
         // 5. Write data and metadata
         self.write_value_at_slot(slot_offset, bytes);
@@ -345,13 +366,14 @@ impl HeapPage for Page {
         let data_offset = u16::from_le_bytes(
             self.data[slot_metadata_offset..slot_metadata_offset + OFFSET_NUM_BYTES]
                 .try_into()
-                .unwrap()
+                .unwrap(),
         ) as usize;
 
         let data_length = u16::from_le_bytes(
-            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES
+                ..slot_metadata_offset + SLOT_METADATA_SIZE]
                 .try_into()
-                .unwrap()
+                .unwrap(),
         ) as usize;
 
         // 3. Check if the slot is deleted (length == 0 means deleted slot)
@@ -375,13 +397,14 @@ impl HeapPage for Page {
         let data_offset = u16::from_le_bytes(
             self.data[slot_metadata_offset..slot_metadata_offset + OFFSET_NUM_BYTES]
                 .try_into()
-                .unwrap()
+                .unwrap(),
         ) as usize;
 
         let data_length: usize = u16::from_le_bytes(
-            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES
+                ..slot_metadata_offset + SLOT_METADATA_SIZE]
                 .try_into()
-                .unwrap()
+                .unwrap(),
         ) as usize;
 
         // Already deleted
@@ -395,7 +418,8 @@ impl HeapPage for Page {
         }
 
         // 4. Set the length in slot metadata to 0
-        self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+        self.data
+            [slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
             .copy_from_slice(&0u16.to_le_bytes());
 
         // 5. Reclaim space: if the deleted data is at the free_space_ptr boundary,
@@ -426,7 +450,8 @@ impl HeapPage for Page {
         ) as usize;
 
         let freed_len = u16::from_le_bytes(
-            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES
+                ..slot_metadata_offset + SLOT_METADATA_SIZE]
                 .try_into()
                 .unwrap(),
         ) as usize;
@@ -447,7 +472,8 @@ impl HeapPage for Page {
             self.data[freed_ptr..freed_ptr + bytes.len()].clone_from_slice(bytes);
 
             // Update metadata length (offset stays the same)
-            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES
+                ..slot_metadata_offset + SLOT_METADATA_SIZE]
                 .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
 
             // Track wasted tail bytes as a hole
@@ -468,7 +494,8 @@ impl HeapPage for Page {
             for i in freed_ptr..freed_ptr + freed_len {
                 self.data[i] = 0;
             }
-            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES
+                ..slot_metadata_offset + SLOT_METADATA_SIZE]
                 .copy_from_slice(&0u16.to_le_bytes());
 
             if freed_ptr == self.get_free_space_ptr() as usize {
@@ -487,16 +514,19 @@ impl HeapPage for Page {
     #[allow(dead_code)]
     fn get_header_size(&self) -> usize {
         // Header is the fixed header + the slot metadata
-        // 
+        //
         // To count number of bytes used by the slots, we calculate the number of
         // Slots that are currently in use and deleted (inner fragmentation), and
         // multiply that by the size of the SLOT_METADATA_SIZE
-        PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE + self.get_num_slots() as usize * SLOT_METADATA_SIZE
+        PAGE_FIXED_HEADER_LEN
+            + HEAP_PAGE_FIXED_METADATA_SIZE
+            + self.get_num_slots() as usize * SLOT_METADATA_SIZE
     }
 
     #[allow(dead_code)]
     fn get_free_space(&self) -> usize {
-        (self.get_free_space_ptr() as usize - self.get_header_size()) + self.get_deleted_bytes() as usize
+        (self.get_free_space_ptr() as usize - self.get_header_size())
+            + self.get_deleted_bytes() as usize
     }
 
     fn iter(&self) -> HeapPageIter<'_> {

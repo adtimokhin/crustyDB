@@ -69,7 +69,6 @@ impl Page {
     /// HINT: To convert a variable x to bytes using little endian, use
     /// x.to_le_bytes()
     pub fn new(page_id: PageId) -> Self {
-
         // Note - though by definition we are passing page_id to be of the size PrageId,
         // we are still checking that the size is appropriate in case the implementation
         // changes at any point in the future
@@ -83,12 +82,15 @@ impl Page {
         // 2 - LSN is two components: PageId (4 bytes) + SlotId (2 bytes), both default to 0
         let lsn_page: PageId = 0;
         let lsn_slot: SlotId = 0;
-        data[LSN_PAGE_OFFSET..LSN_PAGE_OFFSET + PAGE_ID_SIZE].copy_from_slice(&lsn_page.to_le_bytes());
-        data[LSN_SLOT_OFFSET..LSN_SLOT_OFFSET + SLOT_ID_SIZE].copy_from_slice(&lsn_slot.to_le_bytes());
+        data[LSN_PAGE_OFFSET..LSN_PAGE_OFFSET + PAGE_ID_SIZE]
+            .copy_from_slice(&lsn_page.to_le_bytes());
+        data[LSN_SLOT_OFFSET..LSN_SLOT_OFFSET + SLOT_ID_SIZE]
+            .copy_from_slice(&lsn_slot.to_le_bytes());
 
         // 3 - Checksum (2 bytes). Defaults to 0
         let checksum: CheckSum = 0;
-        data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE].copy_from_slice(&checksum.to_le_bytes());
+        data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE]
+            .copy_from_slice(&checksum.to_le_bytes());
 
         // 4 - Spare bytes to fill the fixed header to PAGE_FIXED_HEADER_LEN (16 bytes)
         let spare_offset = CHECKSUM_OFFSET + CHECKSUM_SIZE;
@@ -150,10 +152,14 @@ impl Page {
     /// * `Lsn` - the LSN for the page
     pub fn get_lsn(&self) -> Lsn {
         let page_id = PageId::from_le_bytes(
-            self.data[LSN_PAGE_OFFSET..LSN_PAGE_OFFSET + PAGE_ID_SIZE].try_into().unwrap(),
+            self.data[LSN_PAGE_OFFSET..LSN_PAGE_OFFSET + PAGE_ID_SIZE]
+                .try_into()
+                .unwrap(),
         );
         let slot_id = SlotId::from_le_bytes(
-            self.data[LSN_SLOT_OFFSET..LSN_SLOT_OFFSET + SLOT_ID_SIZE].try_into().unwrap(),
+            self.data[LSN_SLOT_OFFSET..LSN_SLOT_OFFSET + SLOT_ID_SIZE]
+                .try_into()
+                .unwrap(),
         );
         Lsn::new(page_id, slot_id)
     }
@@ -188,7 +194,9 @@ impl Page {
     /// * `CheckSum` - the checksum for the page
     pub fn get_checksum(&self) -> CheckSum {
         CheckSum::from_le_bytes(
-            self.data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE].try_into().unwrap(),
+            self.data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE]
+                .try_into()
+                .unwrap(),
         )
     }
 
@@ -200,7 +208,8 @@ impl Page {
     /// * `&self` - a mutable reference to the page
     pub fn set_checksum(&mut self) {
         // Zero out the checksum field before computing
-        self.data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE].copy_from_slice(&[0u8; CHECKSUM_SIZE]);
+        self.data[CHECKSUM_OFFSET..CHECKSUM_OFFSET + CHECKSUM_SIZE]
+            .copy_from_slice(&[0u8; CHECKSUM_SIZE]);
 
         // Hash the full page bytes
         let mut hasher = std::hash::DefaultHasher::new();
