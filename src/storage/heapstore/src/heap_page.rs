@@ -99,6 +99,11 @@ pub trait HeapPage {
     /// resets deleted_bytes to 0.
     fn compact_page(&mut self);
 
+    /// Write bytes into the page at the given slot metadata offset.
+    /// Compacts if the gap is too small, then writes data from free_space_ptr
+    /// backward and updates the slot's metadata (offset + length).
+    fn write_value_at_slot(&mut self, slot_offset: usize, bytes: &[u8]);
+
     // Do not change these functions signatures (only the function bodies)
 
     /// Initialize the page struct as a heap page.
@@ -276,6 +281,26 @@ impl HeapPage for Page {
         self.set_deleted_bytes(0);
     }
 
+    fn write_value_at_slot(&mut self, slot_offset: usize, bytes: &[u8]) {
+        // 1. Compact if the gap is too small
+        let gap = self.get_free_space_ptr() as usize - self.get_header_size();
+        if bytes.len() > gap {
+            self.compact_page();
+        }
+
+        // 2. Write data from free_space_ptr backward
+        let current_fsp = self.get_free_space_ptr() as usize;
+        let new_fsp = current_fsp - bytes.len();
+        self.data[new_fsp..current_fsp].clone_from_slice(bytes);
+        self.set_free_space_ptr(new_fsp as u16);
+
+        // 3. Update slot metadata (offset + length)
+        self.data[slot_offset..slot_offset + OFFSET_NUM_BYTES]
+            .copy_from_slice(&(new_fsp as u16).to_le_bytes());
+        self.data[slot_offset + OFFSET_NUM_BYTES..slot_offset + SLOT_METADATA_SIZE]
+            .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     ///                              Main Functions
     ////////////////////////////////////////////////////////////////////////////
@@ -296,40 +321,18 @@ impl HeapPage for Page {
         let slot_offset = self.find_next_free_slot();
         let is_new_slot = slot_offset >= self.get_header_size();
 
-        // 3. Compute how much contiguous gap space we need
-        let needed_in_gap = if is_new_slot {
-            bytes.len() + SLOT_METADATA_SIZE // data + header growth
-        } else {
-            bytes.len() // data only, slot metadata already exists
-        };
-
-        // 4. If gap alone is too small, compact first (BEFORE touching header)
-        let gap = self.get_free_space_ptr() as usize - self.get_header_size();
-        if needed_in_gap > gap {
-            self.compact_page();
-        }
-
-        // 5. Update slot counts
+        // 3. Update slot counts (BEFORE write_value_at_slot so header_size is correct)
         if is_new_slot {
             self.increment_num_slots();
         } else {
             self.set_deleted_slot_count(self.get_deleted_slot_count() - 1);
         }
 
-        // 6. Compute slot_id
+        // 4. Compute slot_id
         let slot_id = ((slot_offset - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE) / SLOT_METADATA_SIZE) as SlotId;
 
-        // 7. Place the bytes from the free_space_ptr backwards
-        let current_fsp = self.get_free_space_ptr() as usize;
-        let new_fsp = current_fsp - bytes.len();
-        self.data[new_fsp..current_fsp].clone_from_slice(bytes);
-        self.set_free_space_ptr(new_fsp as u16);
-
-        // 8. Write the slot metadata (data offset + data length)
-        self.data[slot_offset..slot_offset + OFFSET_NUM_BYTES]
-            .copy_from_slice(&(new_fsp as u16).to_le_bytes());
-        self.data[slot_offset + OFFSET_NUM_BYTES..slot_offset + SLOT_METADATA_SIZE]
-            .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+        // 5. Write data and metadata
+        self.write_value_at_slot(slot_offset, bytes);
 
         Some(slot_id)
     }
@@ -478,23 +481,8 @@ impl HeapPage for Page {
                 self.set_deleted_bytes(self.get_deleted_bytes() + freed_len as u16);
             }
 
-            // Compact if gap is too small
-            let gap = self.get_free_space_ptr() as usize - self.get_header_size();
-            if bytes.len() > gap {
-                self.compact_page();
-            }
-
-            // Allocate from gap
-            let current_fsp = self.get_free_space_ptr() as usize;
-            let new_fsp = current_fsp - bytes.len();
-            self.data[new_fsp..current_fsp].clone_from_slice(bytes);
-            self.set_free_space_ptr(new_fsp as u16);
-
-            // Update metadata
-            self.data[slot_metadata_offset..slot_metadata_offset + OFFSET_NUM_BYTES]
-                .copy_from_slice(&(new_fsp as u16).to_le_bytes());
-            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
-                .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+            // Write new data at the same slot
+            self.write_value_at_slot(slot_metadata_offset, bytes);
 
             Some(())
         }
