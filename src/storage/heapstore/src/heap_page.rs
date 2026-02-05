@@ -256,7 +256,11 @@ impl HeapPage for Page {
             }
         }
 
-        // 2. Repack data contiguously from PAGE_SIZE backward
+        // 2. Sort by growing length so largest values end up closest to free_space_ptr,
+        //    improving direct reclamation chances on delete.
+        live_slots.sort_by_key(|(_, data)| data.len());
+
+        // 3. Repack data contiguously from PAGE_SIZE backward
         let mut new_fsp = PAGE_SIZE;
         for (slot_index, data) in &live_slots {
             new_fsp -= data.len();
@@ -267,7 +271,7 @@ impl HeapPage for Page {
                 .copy_from_slice(&(new_fsp as u16).to_le_bytes());
         }
 
-        // 3. Update free space pointer and reset deleted bytes counter
+        // 4. Update free space pointer and reset deleted bytes counter
         self.set_free_space_ptr(new_fsp as u16);
         self.set_deleted_bytes(0);
     }
