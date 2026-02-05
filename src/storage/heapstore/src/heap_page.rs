@@ -70,6 +70,10 @@ pub trait HeapPage {
     /// or the offset following get_header_size() if all slots are occupied.
     fn find_next_free_slot(&self) -> usize;
 
+    /// Given a slot_id, return the byte offset of that slot's metadata within the page.
+    /// Returns -1 if the slot_id is out of range (>= number of slots).
+    fn get_slot_metadata_offset(&self, slot_id: SlotId) -> isize;
+
     // Do not change these functions signatures (only the function bodies)
 
     /// Initialize the page struct as a heap page.
@@ -178,6 +182,14 @@ impl HeapPage for Page {
         end // If we are here - all slots are in use, and we should use next one
     }
 
+    fn get_slot_metadata_offset(&self, slot_id: SlotId) -> isize {
+        let num_slots = self.get_num_slots() as usize;
+        if (slot_id as usize) >= num_slots {
+            return -1;
+        }
+        (PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE + (slot_id as usize) * SLOT_METADATA_SIZE) as isize
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     ///                              Main Functions
     ////////////////////////////////////////////////////////////////////////////
@@ -245,18 +257,12 @@ impl HeapPage for Page {
     }
 
     fn get_value(&self, slot_id: SlotId) -> Option<&[u8]> {
-        // 1. Check that slot_id is within used slots
-        // Calculate number of slots by subtracting fixed headers from total header size
-        // and dividing by slot metadata size
-        let num_slots = (self.get_header_size() - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE) / SLOT_METADATA_SIZE;
-
-        // Verify slot_id is within range
-        if (slot_id as usize) >= num_slots {
+        // 1. Find offset of slot metadata (returns -1 if slot_id is out of range)
+        let offset = self.get_slot_metadata_offset(slot_id);
+        if offset < 0 {
             return None;
         }
-
-        // 2. Find offset of slot metadata
-        let slot_metadata_offset = PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE + (slot_id as usize) * SLOT_METADATA_SIZE;
+        let slot_metadata_offset = offset as usize;
 
         // Parse the slot metadata (offset and length)
         let data_offset = u16::from_le_bytes(
