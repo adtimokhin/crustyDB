@@ -181,7 +181,7 @@ impl HeapPage for Page {
 
     #[allow(dead_code)]
     fn get_free_space(&self) -> usize {
-        panic!("TODO milestone pg");
+        self.get_free_space_ptr() as usize - self.get_header_size()
     }
 
     fn iter(&self) -> HeapPageIter<'_> {
