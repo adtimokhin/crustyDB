@@ -535,7 +535,7 @@ impl<'a> Iterator for HeapPageIter<'a> {
             let slot_id = self.current_slot;
             self.current_slot += 1;
             if let Some(bytes) = self.page.get_value(slot_id) {
-                return Some((bytes, slot_id)); // FIXME: Not including the &'a
+                return Some((bytes, slot_id));
             }
             // Deleted slot — skip and try next
         }
