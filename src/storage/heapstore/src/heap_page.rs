@@ -17,6 +17,11 @@ pub(crate) const SLOT_METADATA_SIZE: usize = 4;
 /// The size of the metadata allowed for the heap page, this is in addition to the page header
 pub(crate) const HEAP_PAGE_FIXED_METADATA_SIZE: usize = 8;
 
+/// Offset of the slot count within the heap metadata (relative to Deref start, i.e. after PAGE_FIXED_HEADER_LEN).
+/// Stored as a u16 (2 bytes).
+const NUM_SLOTS_OFFSET: usize = 0;
+const NUM_SLOTS_SIZE: usize = mem::size_of::<u16>();
+
 /// This is trait of a HeapPage for the Page struct.
 ///
 /// The page header size is fixed to `PAGE_FIXED_HEADER_LEN` bytes and you will use
@@ -32,7 +37,11 @@ pub(crate) const HEAP_PAGE_FIXED_METADATA_SIZE: usize = 8;
 /// bytes & subsequent inserts can simply add 6 more bytes to the header as normal.
 /// The rest must filled as much as possible to hold values.
 pub trait HeapPage {
-    // Add any new functions here
+    /// Get the total number of slots (active and deleted) on this page.
+    fn get_num_slots(&self) -> u16;
+
+    /// Set the total number of slots (active and deleted) on this page.
+    fn set_num_slots(&mut self, num_slots: u16);
 
     // Do not change these functions signatures (only the function bodies)
 
@@ -88,6 +97,15 @@ pub trait HeapPage {
 }
 
 impl HeapPage for Page {
+    fn get_num_slots(&self) -> u16 {
+        u16::from_le_bytes(self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE].try_into().unwrap())
+    }
+
+    fn set_num_slots(&mut self, num_slots: u16) {
+        self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE]
+            .copy_from_slice(&num_slots.to_le_bytes());
+    }
+
     fn init_heap_page(&mut self) {
         //TODO milestone pg
         //Add any initialization code here
