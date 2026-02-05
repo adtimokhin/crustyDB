@@ -287,7 +287,41 @@ impl HeapPage for Page {
     }
 
     fn delete_value(&mut self, slot_id: SlotId) -> Option<()> {
-        panic!("TODO milestone pg");
+        // 1. Find offset of slot metadata
+        let offset = self.get_slot_metadata_offset(slot_id);
+        if offset < 0 {
+            return None;
+        }
+        let slot_metadata_offset = offset as usize;
+
+        // 2. Read data offset and length from slot metadata
+        let data_offset = u16::from_le_bytes(
+            self.data[slot_metadata_offset..slot_metadata_offset + OFFSET_NUM_BYTES]
+                .try_into()
+                .unwrap()
+        ) as usize;
+
+        let data_length: usize = u16::from_le_bytes(
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+                .try_into()
+                .unwrap()
+        ) as usize;
+
+        // Already deleted
+        if data_length == 0 {
+            return None;
+        }
+
+        // 3. Zero out the data bytes
+        for i in data_offset..data_offset + data_length {
+            self.data[i] = 0;
+        }
+
+        // 4. Set the length in slot metadata to 0
+        self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+            .copy_from_slice(&0u16.to_le_bytes());
+
+        Some(())
     }
 
     fn update_value(&mut self, slot_id: SlotId, bytes: &[u8]) -> Option<()> {
