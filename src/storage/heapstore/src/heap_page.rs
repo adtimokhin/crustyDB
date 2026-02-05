@@ -233,8 +233,43 @@ impl HeapPage for Page {
         (PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE + (slot_id as usize) * SLOT_METADATA_SIZE) as isize
     }
 
-    fn compact_page(&mut self){
-        panic!("TODO: IMPLEMENT!")
+    fn compact_page(&mut self) {
+        let num_slots = self.get_num_slots() as usize;
+        let header_start = PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE;
+
+        // 1. Collect all live slot data into Vecs to avoid overlap issues during repacking
+        let mut live_slots: Vec<(usize, Vec<u8>)> = Vec::new();
+        for i in 0..num_slots {
+            let meta_offset = header_start + i * SLOT_METADATA_SIZE;
+            let data_offset = u16::from_le_bytes(
+                self.data[meta_offset..meta_offset + OFFSET_NUM_BYTES]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let data_length = u16::from_le_bytes(
+                self.data[meta_offset + OFFSET_NUM_BYTES..meta_offset + SLOT_METADATA_SIZE]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            if data_length > 0 {
+                live_slots.push((i, self.data[data_offset..data_offset + data_length].to_vec()));
+            }
+        }
+
+        // 2. Repack data contiguously from PAGE_SIZE backward
+        let mut new_fsp = PAGE_SIZE;
+        for (slot_index, data) in &live_slots {
+            new_fsp -= data.len();
+            self.data[new_fsp..new_fsp + data.len()].copy_from_slice(data);
+            // Update this slot's data offset in its metadata
+            let meta_offset = header_start + slot_index * SLOT_METADATA_SIZE;
+            self.data[meta_offset..meta_offset + OFFSET_NUM_BYTES]
+                .copy_from_slice(&(new_fsp as u16).to_le_bytes());
+        }
+
+        // 3. Update free space pointer and reset deleted bytes counter
+        self.set_free_space_ptr(new_fsp as u16);
+        self.set_deleted_bytes(0);
     }
 
     ////////////////////////////////////////////////////////////////////////////
