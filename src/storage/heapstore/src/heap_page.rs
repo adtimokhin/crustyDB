@@ -3,7 +3,7 @@ use common::prelude::*;
 use common::PAGE_SIZE;
 
 #[allow(unused_imports)]
-use crate::page::{Offset, Page, OFFSET_NUM_BYTES};
+use crate::page::{Offset, Page, OFFSET_NUM_BYTES, PAGE_FIXED_HEADER_LEN};
 
 use std::mem;
 
@@ -176,11 +176,13 @@ impl HeapPage for Page {
         // To count number of bytes used by the slots, we calculate the number of
         // Slots that are currently in use and deleted (inner fragmentation), and
         // multiply that by the size of the SLOT_METADATA_SIZE
-        HEAP_PAGE_FIXED_METADATA_SIZE + self.get_num_slots() as usize * SLOT_METADATA_SIZE
+        PAGE_FIXED_HEADER_LEN + self.get_num_slots() as usize * SLOT_METADATA_SIZE
     }
 
     #[allow(dead_code)]
     fn get_free_space(&self) -> usize {
+        println!("free_space_ptr: {}", self.get_free_space_ptr() as usize);
+        println!("header_size: {}", self.get_header_size());
         self.get_free_space_ptr() as usize - self.get_header_size()
     }
 
