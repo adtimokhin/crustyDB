@@ -62,9 +62,6 @@ pub trait HeapPage {
     /// Increment the total number of slots by 1 and return the new count.
     fn increment_num_slots(&mut self) -> u16;
 
-    /// Decrement the total number of slots by 1 and return the new count.
-    /// Panics if the slot count is already 0.
-    fn decrement_num_slots(&mut self) -> u16;
 
     /// Get the free space pointer. This points to the start of free space in the data area
     /// (relative to the Deref start).
@@ -172,14 +169,6 @@ impl HeapPage for Page {
 
     fn increment_num_slots(&mut self) -> u16 {
         let new_count = self.get_num_slots() + 1;
-        self.set_num_slots(new_count);
-        new_count
-    }
-
-    fn decrement_num_slots(&mut self) -> u16 {
-        let current = self.get_num_slots();
-        assert!(current > 0, "Cannot decrement slot count below 0");
-        let new_count = current - 1;
         self.set_num_slots(new_count);
         new_count
     }
