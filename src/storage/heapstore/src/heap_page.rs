@@ -283,57 +283,49 @@ impl HeapPage for Page {
     }
 
     fn add_value(&mut self, bytes: &[u8]) -> Option<SlotId> {
-        // For now, we are not concerning ourselves with reusing data
-        // Though in the future we will!
-
-        // println!("=== add_value called ===");
-        // println!("  bytes.len(): {}", bytes.len());
-        // println!("  num_slots: {}", self.get_num_slots());
-        // println!("  free_space_ptr: {}", self.get_free_space_ptr());
-        // println!("  header_size: {}", self.get_header_size());
-        // println!("  free_space: {}", self.get_free_space());
-
-        // 1 - Check that the bytes len + metadata len (4 bytes) is less than or equal to the get_free_space() return value.
+        // 1. Check total free space (gap + reclaimable holes)
         if bytes.len() + SLOT_METADATA_SIZE >= self.get_free_space() {
-            // println!("  NOT ENOUGH SPACE: need {}, have {}", bytes.len() + SLOT_METADATA_SIZE, self.get_free_space());
             return None;
         }
 
-        // 2 - Find run find_next_free_slot() to find the next free offset.
+        // 2. Find next free slot
         let slot_offset = self.find_next_free_slot();
-        // println!("  slot_offset: {}, header_size: {}", slot_offset, self.get_header_size());
+        let is_new_slot = slot_offset >= self.get_header_size();
 
-        // 3 - If slot_offset >= get_header_size, then we are adding a new slot
-        // Hence, we are incrementing the number of slots
-        if slot_offset >= self.get_header_size() {
-            // println!("  new slot (incrementing num_slots)");
-            self.increment_num_slots();
+        // 3. Compute how much contiguous gap space we need
+        let needed_in_gap = if is_new_slot {
+            bytes.len() + SLOT_METADATA_SIZE // data + header growth
         } else {
-            // println!("  reusing deleted slot at offset {}", slot_offset);
+            bytes.len() // data only, slot metadata already exists
+        };
+
+        // 4. If gap alone is too small, compact first (BEFORE touching header)
+        let gap = self.get_free_space_ptr() as usize - self.get_header_size();
+        if needed_in_gap > gap {
+            self.compact_page();
         }
 
-        // 4 - get the SlotId by (slot_offset - PAGE_FIXED_HEADER_LEN) / SLOT_METADATA_SIZE
-        let slot_id = ((slot_offset - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE) / SLOT_METADATA_SIZE) as SlotId;
-        // println!("  slot_id: {}", slot_id);
+        // 5. Update slot counts
+        if is_new_slot {
+            self.increment_num_slots();
+        } else {
+            self.set_deleted_slot_count(self.get_deleted_slot_count() - 1);
+        }
 
-        // ASSUMING THAT WE HAVE NO DELETION
-        // 5 - Place the bytes from the free_space_ptr backwards
-        // and update the free_space_ptr to point to the start of those bytes
+        // 6. Compute slot_id
+        let slot_id = ((slot_offset - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE) / SLOT_METADATA_SIZE) as SlotId;
+
+        // 7. Place the bytes from the free_space_ptr backwards
         let current_fsp = self.get_free_space_ptr() as usize;
         let new_fsp = current_fsp - bytes.len();
-        // println!("  writing data: self.data[{}..{}]", new_fsp, current_fsp);
         self.data[new_fsp..current_fsp].clone_from_slice(bytes);
         self.set_free_space_ptr(new_fsp as u16);
 
-        // 6 - Write the slot metadata (data offset + data length) at slot_offset
-        // println!("  slot metadata at self.data[{}..{}]: offset={}, length={}", slot_offset, slot_offset + SLOT_METADATA_SIZE, new_fsp, bytes.len());
+        // 8. Write the slot metadata (data offset + data length)
         self.data[slot_offset..slot_offset + OFFSET_NUM_BYTES]
             .copy_from_slice(&(new_fsp as u16).to_le_bytes());
         self.data[slot_offset + OFFSET_NUM_BYTES..slot_offset + SLOT_METADATA_SIZE]
             .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
-
-        // Print the page for debugging
-        // println!("{:?}", self);
 
         Some(slot_id)
     }
@@ -403,6 +395,15 @@ impl HeapPage for Page {
         self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
             .copy_from_slice(&0u16.to_le_bytes());
 
+        // 5. Reclaim space: if the deleted data is at the free_space_ptr boundary,
+        //    advance the pointer directly. Otherwise, track it as a hole.
+        if data_offset == self.get_free_space_ptr() as usize {
+            self.set_free_space_ptr((data_offset + data_length) as u16);
+        } else {
+            self.set_deleted_bytes(self.get_deleted_bytes() + data_length as u16);
+        }
+        self.set_deleted_slot_count(self.get_deleted_slot_count() + 1);
+
         Some(())
     }
 
@@ -422,7 +423,7 @@ impl HeapPage for Page {
 
     #[allow(dead_code)]
     fn get_free_space(&self) -> usize {
-        self.get_free_space_ptr() as usize - self.get_header_size()
+        (self.get_free_space_ptr() as usize - self.get_header_size()) + self.get_deleted_bytes() as usize
     }
 
     fn iter(&self) -> HeapPageIter<'_> {
