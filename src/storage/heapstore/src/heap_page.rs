@@ -150,7 +150,12 @@ impl HeapPage for Page {
 
     #[allow(dead_code)]
     fn get_header_size(&self) -> usize {
-        panic!("TODO milestone pg");
+        // Header is the fixed header + the slot metadata
+        // 
+        // To count number of bytes used by the slots, we calculate the number of
+        // Slots that are currently in use and deleted (inner fragmentation), and
+        // multiply that by the size of the SLOT_METADATA_SIZE
+        HEAP_PAGE_FIXED_METADATA_SIZE + self.get_num_slots() as usize * SLOT_METADATA_SIZE
     }
 
     #[allow(dead_code)]
