@@ -412,7 +412,92 @@ impl HeapPage for Page {
     }
 
     fn update_value(&mut self, slot_id: SlotId, bytes: &[u8]) -> Option<()> {
-        panic!("TODO milestone pg");
+        // 1. Find slot metadata offset
+        let offset = self.get_slot_metadata_offset(slot_id);
+        if offset < 0 {
+            return None;
+        }
+        let slot_metadata_offset = offset as usize;
+
+        // 2. Establish old data location and length
+        let freed_ptr = u16::from_le_bytes(
+            self.data[slot_metadata_offset..slot_metadata_offset + OFFSET_NUM_BYTES]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+
+        let freed_len = u16::from_le_bytes(
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+
+        // Deleted slot
+        if freed_len == 0 {
+            return None;
+        }
+
+        if bytes.len() <= freed_len {
+            // 3a. New data fits in old space — free then reuse
+            // Zero out old data
+            for i in freed_ptr..freed_ptr + freed_len {
+                self.data[i] = 0;
+            }
+
+            // Write new data into old location
+            self.data[freed_ptr..freed_ptr + bytes.len()].clone_from_slice(bytes);
+
+            // Update metadata length (offset stays the same)
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+                .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+
+            // Track wasted tail bytes as a hole
+            let waste = freed_len - bytes.len();
+            if waste > 0 {
+                self.set_deleted_bytes(self.get_deleted_bytes() + waste as u16);
+            }
+
+            Some(())
+        } else {
+            // 3b. New data doesn't fit — check space before freeing
+            // After freeing, available = current free space + freed_len
+            if bytes.len() >= self.get_free_space() + freed_len {
+                return None; // Not enough space, leave old value intact
+            }
+
+            // Free the old space
+            for i in freed_ptr..freed_ptr + freed_len {
+                self.data[i] = 0;
+            }
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+                .copy_from_slice(&0u16.to_le_bytes());
+
+            if freed_ptr == self.get_free_space_ptr() as usize {
+                self.set_free_space_ptr((freed_ptr + freed_len) as u16);
+            } else {
+                self.set_deleted_bytes(self.get_deleted_bytes() + freed_len as u16);
+            }
+
+            // Compact if gap is too small
+            let gap = self.get_free_space_ptr() as usize - self.get_header_size();
+            if bytes.len() > gap {
+                self.compact_page();
+            }
+
+            // Allocate from gap
+            let current_fsp = self.get_free_space_ptr() as usize;
+            let new_fsp = current_fsp - bytes.len();
+            self.data[new_fsp..current_fsp].clone_from_slice(bytes);
+            self.set_free_space_ptr(new_fsp as u16);
+
+            // Update metadata
+            self.data[slot_metadata_offset..slot_metadata_offset + OFFSET_NUM_BYTES]
+                .copy_from_slice(&(new_fsp as u16).to_le_bytes());
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+                .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
+
+            Some(())
+        }
     }
 
     #[allow(dead_code)]
