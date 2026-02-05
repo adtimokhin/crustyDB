@@ -69,11 +69,6 @@ impl Page {
     /// HINT: To convert a variable x to bytes using little endian, use
     /// x.to_le_bytes()
     pub fn new(page_id: PageId) -> Self {
-        // Note - though by definition we are passing page_id to be of the size PrageId,
-        // we are still checking that the size is appropriate in case the implementation
-        // changes at any point in the future
-        assert!(common::fits_in_type::<[u8; PAGE_ID_SIZE], _>(&page_id));
-
         // 1 - PageId (4 bytes)
         let page_id_bytes: [u8; _] = page_id.to_le_bytes();
         let mut data: [u8; 4096] = [0u8; PAGE_SIZE];
