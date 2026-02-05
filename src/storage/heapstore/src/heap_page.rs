@@ -22,6 +22,11 @@ pub(crate) const HEAP_PAGE_FIXED_METADATA_SIZE: usize = 8;
 const NUM_SLOTS_OFFSET: usize = 0;
 const NUM_SLOTS_SIZE: usize = mem::size_of::<u16>();
 
+/// Offset of the free space pointer within the heap metadata (relative to Deref start).
+/// Points to the start of free space in the data area. Stored as a u16 (2 bytes).
+const FREE_SPACE_PTR_OFFSET: usize = NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE;
+const FREE_SPACE_PTR_SIZE: usize = mem::size_of::<u16>();
+
 /// This is trait of a HeapPage for the Page struct.
 ///
 /// The page header size is fixed to `PAGE_FIXED_HEADER_LEN` bytes and you will use
@@ -49,6 +54,13 @@ pub trait HeapPage {
     /// Decrement the total number of slots by 1 and return the new count.
     /// Panics if the slot count is already 0.
     fn decrement_num_slots(&mut self) -> u16;
+
+    /// Get the free space pointer. This points to the start of free space in the data area
+    /// (relative to the Deref start).
+    fn get_free_space_ptr(&self) -> u16;
+
+    /// Set the free space pointer.
+    fn set_free_space_ptr(&mut self, ptr: u16);
 
     // Do not change these functions signatures (only the function bodies)
 
@@ -125,6 +137,15 @@ impl HeapPage for Page {
         let new_count = current - 1;
         self.set_num_slots(new_count);
         new_count
+    }
+
+    fn get_free_space_ptr(&self) -> u16 {
+        u16::from_le_bytes(self[FREE_SPACE_PTR_OFFSET..FREE_SPACE_PTR_OFFSET + FREE_SPACE_PTR_SIZE].try_into().unwrap())
+    }
+
+    fn set_free_space_ptr(&mut self, ptr: u16) {
+        self[FREE_SPACE_PTR_OFFSET..FREE_SPACE_PTR_OFFSET + FREE_SPACE_PTR_SIZE]
+            .copy_from_slice(&ptr.to_le_bytes());
     }
 
     fn init_heap_page(&mut self) {
