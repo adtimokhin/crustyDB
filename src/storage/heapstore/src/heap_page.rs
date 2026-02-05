@@ -157,6 +157,7 @@ impl HeapPage for Page {
     ////////////////////////////////////////////////////////////////////////////
     ///                         Helper Functions
     ////////////////////////////////////////////////////////////////////////////
+    #[inline]
     fn get_num_slots(&self) -> u16 {
         u16::from_le_bytes(
             self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE]
@@ -165,17 +166,20 @@ impl HeapPage for Page {
         )
     }
 
+    #[inline]
     fn set_num_slots(&mut self, num_slots: u16) {
         self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE]
             .copy_from_slice(&num_slots.to_le_bytes());
     }
 
+    #[inline]
     fn increment_num_slots(&mut self) -> u16 {
         let new_count = self.get_num_slots() + 1;
         self.set_num_slots(new_count);
         new_count
     }
 
+    #[inline]
     fn get_free_space_ptr(&self) -> u16 {
         u16::from_le_bytes(
             self[FREE_SPACE_PTR_OFFSET..FREE_SPACE_PTR_OFFSET + FREE_SPACE_PTR_SIZE]
@@ -184,11 +188,13 @@ impl HeapPage for Page {
         )
     }
 
+    #[inline]
     fn set_free_space_ptr(&mut self, ptr: u16) {
         self[FREE_SPACE_PTR_OFFSET..FREE_SPACE_PTR_OFFSET + FREE_SPACE_PTR_SIZE]
             .copy_from_slice(&ptr.to_le_bytes());
     }
 
+    #[inline]
     fn get_deleted_bytes(&self) -> u16 {
         u16::from_le_bytes(
             self[DELETED_BYTES_OFFSET..DELETED_BYTES_OFFSET + DELETED_BYTES_SIZE]
@@ -197,11 +203,13 @@ impl HeapPage for Page {
         )
     }
 
+    #[inline]
     fn set_deleted_bytes(&mut self, bytes: u16) {
         self[DELETED_BYTES_OFFSET..DELETED_BYTES_OFFSET + DELETED_BYTES_SIZE]
             .copy_from_slice(&bytes.to_le_bytes());
     }
 
+    #[inline]
     fn get_deleted_slot_count(&self) -> u16 {
         u16::from_le_bytes(
             self[DELETED_SLOT_COUNT_OFFSET..DELETED_SLOT_COUNT_OFFSET + DELETED_SLOT_COUNT_SIZE]
@@ -210,6 +218,7 @@ impl HeapPage for Page {
         )
     }
 
+    #[inline]
     fn set_deleted_slot_count(&mut self, count: u16) {
         self[DELETED_SLOT_COUNT_OFFSET..DELETED_SLOT_COUNT_OFFSET + DELETED_SLOT_COUNT_SIZE]
             .copy_from_slice(&count.to_le_bytes());
@@ -234,6 +243,7 @@ impl HeapPage for Page {
         end // If we are here - all slots are in use, and we should use next one
     }
 
+    #[inline]
     fn get_slot_metadata_offset(&self, slot_id: SlotId) -> isize {
         let num_slots = self.get_num_slots() as usize;
         if (slot_id as usize) >= num_slots {
@@ -512,6 +522,7 @@ impl HeapPage for Page {
     }
 
     #[allow(dead_code)]
+    #[inline]
     fn get_header_size(&self) -> usize {
         // Header is the fixed header + the slot metadata
         //
@@ -524,6 +535,7 @@ impl HeapPage for Page {
     }
 
     #[allow(dead_code)]
+    #[inline]
     fn get_free_space(&self) -> usize {
         (self.get_free_space_ptr() as usize - self.get_header_size())
             + self.get_deleted_bytes() as usize
