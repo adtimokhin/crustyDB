@@ -312,18 +312,25 @@ impl HeapPage for Page {
     }
 
     fn add_value(&mut self, bytes: &[u8]) -> Option<SlotId> {
-        // 1. Check total free space (gap + reclaimable holes)
-        if bytes.len() + SLOT_METADATA_SIZE >= self.get_free_space() {
-            return None;
-        }
-
-        // 2. Find next free slot
+        // 1. Find next free slot FIRST so we know if we need space for new metadata
         let slot_offset = self.find_next_free_slot();
         let is_new_slot = slot_offset >= self.get_header_size();
+
+        // 2. Check total free space — only include SLOT_METADATA_SIZE for new slots
+        let needed = if is_new_slot {
+            bytes.len() + SLOT_METADATA_SIZE
+        } else {
+            bytes.len()
+        };
+        if needed >= self.get_free_space() {
+            return None;
+        }
 
         // 3. Update slot counts (BEFORE write_value_at_slot so header_size is correct)
         if is_new_slot {
             self.increment_num_slots();
+            // Zero out the new slot's metadata so compact_page doesn't read garbage
+            self.data[slot_offset..slot_offset + SLOT_METADATA_SIZE].fill(0);
         } else {
             self.set_deleted_slot_count(self.get_deleted_slot_count() - 1);
         }
@@ -528,7 +535,7 @@ impl<'a> Iterator for HeapPageIter<'a> {
             let slot_id = self.current_slot;
             self.current_slot += 1;
             if let Some(bytes) = self.page.get_value(slot_id) {
-                return Some((bytes, slot_id));
+                return Some((bytes, slot_id)); // FIXME: Not including the &'a
             }
             // Deleted slot — skip and try next
         }
