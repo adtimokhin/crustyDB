@@ -42,6 +42,9 @@ const FREE_SPACE_PTR_SIZE: usize = mem::size_of::<u16>();
 /// bytes & subsequent inserts can simply add 6 more bytes to the header as normal.
 /// The rest must filled as much as possible to hold values.
 pub trait HeapPage {
+    ////////////////////////////////////////////////////////////////////////////
+    ///                         Helper Functions
+    ////////////////////////////////////////////////////////////////////////////
     /// Get the total number of slots (active and deleted) on this page.
     fn get_num_slots(&self) -> u16;
 
@@ -61,6 +64,11 @@ pub trait HeapPage {
 
     /// Set the free space pointer.
     fn set_free_space_ptr(&mut self, ptr: u16);
+
+    /// Find the next free slot by scanning slot metadata from PAGE_FIXED_HEADER_LEN
+    /// to get_header_size(). Returns the offset of the first slot whose length is zero,
+    /// or the offset following get_header_size() if all slots are occupied.
+    fn find_next_free_slot(&self) -> usize;
 
     // Do not change these functions signatures (only the function bodies)
 
@@ -116,6 +124,9 @@ pub trait HeapPage {
 }
 
 impl HeapPage for Page {
+    ////////////////////////////////////////////////////////////////////////////
+    ///                         Helper Functions
+    ////////////////////////////////////////////////////////////////////////////
     fn get_num_slots(&self) -> u16 {
         u16::from_le_bytes(self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE].try_into().unwrap())
     }
@@ -148,6 +159,28 @@ impl HeapPage for Page {
             .copy_from_slice(&ptr.to_le_bytes());
     }
 
+    fn find_next_free_slot(&self) -> usize {
+        let start = PAGE_FIXED_HEADER_LEN;
+        let end = self.get_header_size();
+        let mut offset = start;
+        while offset < end {
+            // Length is stored in the last 2 bytes of each slot's metadata
+            let length = u16::from_le_bytes(
+                self.data[offset + OFFSET_NUM_BYTES..offset + SLOT_METADATA_SIZE]
+                    .try_into()
+                    .unwrap(),
+            );
+            if length == 0 {
+                return offset;
+            }
+            offset += SLOT_METADATA_SIZE;
+        }
+        end // If we are here - all slots are in use, and we should use next one
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    ///                              Main Functions
+    ////////////////////////////////////////////////////////////////////////////
     fn init_heap_page(&mut self) {
         //TODO milestone pg
         //Add any initialization code here
