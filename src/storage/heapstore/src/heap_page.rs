@@ -200,7 +200,7 @@ impl HeapPage for Page {
         // println!("  free_space: {}", self.get_free_space());
 
         // 1 - Check that the bytes len + metadata len (4 bytes) is less than or equal to the get_free_space() return value.
-        if bytes.len() + SLOT_METADATA_SIZE > self.get_free_space() {
+        if bytes.len() + SLOT_METADATA_SIZE >= self.get_free_space() {
             // println!("  NOT ENOUGH SPACE: need {}, have {}", bytes.len() + SLOT_METADATA_SIZE, self.get_free_space());
             return None;
         }
@@ -245,7 +245,39 @@ impl HeapPage for Page {
     }
 
     fn get_value(&self, slot_id: SlotId) -> Option<&[u8]> {
-        panic!("TODO milestone pg");
+        // 1. Check that slot_id is within used slots
+        // Calculate number of slots by subtracting fixed headers from total header size
+        // and dividing by slot metadata size
+        let num_slots = (self.get_header_size() - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE) / SLOT_METADATA_SIZE;
+
+        // Verify slot_id is within range
+        if (slot_id as usize) >= num_slots {
+            return None;
+        }
+
+        // 2. Find offset of slot metadata
+        let slot_metadata_offset = PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE + (slot_id as usize) * SLOT_METADATA_SIZE;
+
+        // Parse the slot metadata (offset and length)
+        let data_offset = u16::from_le_bytes(
+            self.data[slot_metadata_offset..slot_metadata_offset + OFFSET_NUM_BYTES]
+                .try_into()
+                .unwrap()
+        ) as usize;
+
+        let data_length = u16::from_le_bytes(
+            self.data[slot_metadata_offset + OFFSET_NUM_BYTES..slot_metadata_offset + SLOT_METADATA_SIZE]
+                .try_into()
+                .unwrap()
+        ) as usize;
+
+        // 3. Check if the slot is deleted (length == 0 means deleted slot)
+        if data_length == 0 {
+            return None;
+        }
+
+        // Get the offset and length to read appropriate bytes and return them
+        Some(&self.data[data_offset..data_offset + data_length])
     }
 
     fn delete_value(&mut self, slot_id: SlotId) -> Option<()> {
