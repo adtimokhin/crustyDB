@@ -506,16 +506,14 @@ impl HeapPage for Page {
     fn iter(&self) -> HeapPageIter<'_> {
         HeapPageIter {
             page: self,
-            //TODO milestone pg
-            //Initialize with added variables here
+            current_slot: 0,
         }
     }
 }
 
 pub struct HeapPageIter<'a> {
     page: &'a Page,
-    //TODO milestone pg
-    // Add any variables here
+    current_slot: SlotId,
 }
 
 impl<'a> Iterator for HeapPageIter<'a> {
@@ -525,7 +523,16 @@ impl<'a> Iterator for HeapPageIter<'a> {
     /// None if there are no more values in the page.
     /// The iterator should return the bytes reference and the slotId for each value in the page as a tuple.
     fn next(&mut self) -> Option<Self::Item> {
-        panic!("TODO milestone pg");
+        let num_slots = self.page.get_num_slots();
+        while self.current_slot < num_slots {
+            let slot_id = self.current_slot;
+            self.current_slot += 1;
+            if let Some(bytes) = self.page.get_value(slot_id) {
+                return Some((bytes, slot_id));
+            }
+            // Deleted slot — skip and try next
+        }
+        None
     }
 }
 
@@ -539,8 +546,7 @@ impl<'a> IntoIterator for &'a Page {
     fn into_iter(self) -> Self::IntoIter {
         HeapPageIter {
             page: self,
-            //TODO milestone pg
-            //Initialize with added variables here
+            current_slot: 0,
         }
     }
 }
