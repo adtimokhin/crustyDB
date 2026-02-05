@@ -151,6 +151,8 @@ impl HeapPage for Page {
     fn init_heap_page(&mut self) {
         //TODO milestone pg
         //Add any initialization code here
+
+        self.set_free_space_ptr(PAGE_SIZE as u16);
     }
 
     fn add_value(&mut self, bytes: &[u8]) -> Option<SlotId> {
@@ -181,8 +183,6 @@ impl HeapPage for Page {
 
     #[allow(dead_code)]
     fn get_free_space(&self) -> usize {
-        println!("free_space_ptr: {}", self.get_free_space_ptr() as usize);
-        println!("header_size: {}", self.get_header_size());
         self.get_free_space_ptr() as usize - self.get_header_size()
     }
 
