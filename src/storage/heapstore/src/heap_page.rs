@@ -160,7 +160,7 @@ impl HeapPage for Page {
     }
 
     fn find_next_free_slot(&self) -> usize {
-        let start = PAGE_FIXED_HEADER_LEN;
+        let start = PAGE_FIXED_HEADER_LEN + HEAP_PAGE_FIXED_METADATA_SIZE;
         let end = self.get_header_size();
         let mut offset = start;
         while offset < end {
@@ -192,54 +192,54 @@ impl HeapPage for Page {
         // For now, we are not concerning ourselves with reusing data
         // Though in the future we will!
 
-        println!("=== add_value called ===");
-        println!("  bytes.len(): {}", bytes.len());
-        println!("  num_slots: {}", self.get_num_slots());
-        println!("  free_space_ptr: {}", self.get_free_space_ptr());
-        println!("  header_size: {}", self.get_header_size());
-        println!("  free_space: {}", self.get_free_space());
+        // println!("=== add_value called ===");
+        // println!("  bytes.len(): {}", bytes.len());
+        // println!("  num_slots: {}", self.get_num_slots());
+        // println!("  free_space_ptr: {}", self.get_free_space_ptr());
+        // println!("  header_size: {}", self.get_header_size());
+        // println!("  free_space: {}", self.get_free_space());
 
         // 1 - Check that the bytes len + metadata len (4 bytes) is less than or equal to the get_free_space() return value.
         if bytes.len() + SLOT_METADATA_SIZE > self.get_free_space() {
-            println!("  NOT ENOUGH SPACE: need {}, have {}", bytes.len() + SLOT_METADATA_SIZE, self.get_free_space());
+            // println!("  NOT ENOUGH SPACE: need {}, have {}", bytes.len() + SLOT_METADATA_SIZE, self.get_free_space());
             return None;
         }
 
         // 2 - Find run find_next_free_slot() to find the next free offset.
         let slot_offset = self.find_next_free_slot();
-        println!("  slot_offset: {}, header_size: {}", slot_offset, self.get_header_size());
+        // println!("  slot_offset: {}, header_size: {}", slot_offset, self.get_header_size());
 
         // 3 - If slot_offset >= get_header_size, then we are adding a new slot
         // Hence, we are incrementing the number of slots
         if slot_offset >= self.get_header_size() {
-            println!("  new slot (incrementing num_slots)");
+            // println!("  new slot (incrementing num_slots)");
             self.increment_num_slots();
         } else {
-            println!("  reusing deleted slot at offset {}", slot_offset);
+            // println!("  reusing deleted slot at offset {}", slot_offset);
         }
 
         // 4 - get the SlotId by (slot_offset - PAGE_FIXED_HEADER_LEN) / SLOT_METADATA_SIZE
-        let slot_id = ((slot_offset - PAGE_FIXED_HEADER_LEN) / SLOT_METADATA_SIZE) as SlotId;
-        println!("  slot_id: {}", slot_id);
+        let slot_id = ((slot_offset - PAGE_FIXED_HEADER_LEN - HEAP_PAGE_FIXED_METADATA_SIZE) / SLOT_METADATA_SIZE) as SlotId;
+        // println!("  slot_id: {}", slot_id);
 
         // ASSUMING THAT WE HAVE NO DELETION
         // 5 - Place the bytes from the free_space_ptr backwards
         // and update the free_space_ptr to point to the start of those bytes
         let current_fsp = self.get_free_space_ptr() as usize;
         let new_fsp = current_fsp - bytes.len();
-        println!("  writing data: self.data[{}..{}]", new_fsp, current_fsp);
+        // println!("  writing data: self.data[{}..{}]", new_fsp, current_fsp);
         self.data[new_fsp..current_fsp].clone_from_slice(bytes);
         self.set_free_space_ptr(new_fsp as u16);
 
         // 6 - Write the slot metadata (data offset + data length) at slot_offset
-        println!("  slot metadata at self.data[{}..{}]: offset={}, length={}", slot_offset, slot_offset + SLOT_METADATA_SIZE, new_fsp, bytes.len());
+        // println!("  slot metadata at self.data[{}..{}]: offset={}, length={}", slot_offset, slot_offset + SLOT_METADATA_SIZE, new_fsp, bytes.len());
         self.data[slot_offset..slot_offset + OFFSET_NUM_BYTES]
             .copy_from_slice(&(new_fsp as u16).to_le_bytes());
         self.data[slot_offset + OFFSET_NUM_BYTES..slot_offset + SLOT_METADATA_SIZE]
             .copy_from_slice(&(bytes.len() as u16).to_le_bytes());
 
         // Print the page for debugging
-        println!("{:?}", self);
+        // println!("{:?}", self);
 
         Some(slot_id)
     }
