@@ -43,6 +43,13 @@ pub trait HeapPage {
     /// Set the total number of slots (active and deleted) on this page.
     fn set_num_slots(&mut self, num_slots: u16);
 
+    /// Increment the total number of slots by 1 and return the new count.
+    fn increment_num_slots(&mut self) -> u16;
+
+    /// Decrement the total number of slots by 1 and return the new count.
+    /// Panics if the slot count is already 0.
+    fn decrement_num_slots(&mut self) -> u16;
+
     // Do not change these functions signatures (only the function bodies)
 
     /// Initialize the page struct as a heap page.
@@ -104,6 +111,20 @@ impl HeapPage for Page {
     fn set_num_slots(&mut self, num_slots: u16) {
         self[NUM_SLOTS_OFFSET..NUM_SLOTS_OFFSET + NUM_SLOTS_SIZE]
             .copy_from_slice(&num_slots.to_le_bytes());
+    }
+
+    fn increment_num_slots(&mut self) -> u16 {
+        let new_count = self.get_num_slots() + 1;
+        self.set_num_slots(new_count);
+        new_count
+    }
+
+    fn decrement_num_slots(&mut self) -> u16 {
+        let current = self.get_num_slots();
+        assert!(current > 0, "Cannot decrement slot count below 0");
+        let new_count = current - 1;
+        self.set_num_slots(new_count);
+        new_count
     }
 
     fn init_heap_page(&mut self) {
