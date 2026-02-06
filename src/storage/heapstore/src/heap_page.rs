@@ -342,7 +342,8 @@ impl HeapPage for Page {
         if is_new_slot {
             let gap = self.get_free_space_ptr() as usize - self.get_header_size();
             // Need gap for slot metadata + enough total space for data + metadata
-            if gap < SLOT_METADATA_SIZE || bytes.len() + SLOT_METADATA_SIZE >= self.get_free_space() {
+            if gap < SLOT_METADATA_SIZE || bytes.len() + SLOT_METADATA_SIZE >= self.get_free_space()
+            {
                 return None;
             }
         } else if bytes.len() >= self.get_free_space() {
