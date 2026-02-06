@@ -335,13 +335,17 @@ impl HeapPage for Page {
         let slot_offset = self.find_next_free_slot();
         let is_new_slot = slot_offset >= self.get_header_size();
 
-        // 2. Check total free space — only include SLOT_METADATA_SIZE for new slots
-        let needed = if is_new_slot {
-            bytes.len() + SLOT_METADATA_SIZE
-        } else {
-            bytes.len()
-        };
-        if needed >= self.get_free_space() {
+        // 2. Check space
+        // For new slots: need SLOT_METADATA_SIZE in the gap (can't use holes for metadata)
+        //                AND (bytes.len() + SLOT_METADATA_SIZE) in total free space
+        // For reused slots: just need bytes.len() in total free space
+        if is_new_slot {
+            let gap = self.get_free_space_ptr() as usize - self.get_header_size();
+            // Need gap for slot metadata + enough total space for data + metadata
+            if gap < SLOT_METADATA_SIZE || bytes.len() + SLOT_METADATA_SIZE >= self.get_free_space() {
+                return None;
+            }
+        } else if bytes.len() >= self.get_free_space() {
             return None;
         }
 
@@ -387,7 +391,8 @@ impl HeapPage for Page {
         ) as usize;
 
         // 3. Check if the slot is deleted (length == 0 means deleted slot)
-        if data_length == 0 {
+        //    or if the data is out of bounds (corrupted metadata)
+        if data_length == 0 || data_offset + data_length > PAGE_SIZE {
             return None;
         }
 
@@ -417,8 +422,8 @@ impl HeapPage for Page {
                 .unwrap(),
         ) as usize;
 
-        // Already deleted
-        if data_length == 0 {
+        // Already deleted or corrupted metadata
+        if data_length == 0 || data_offset + data_length > PAGE_SIZE {
             return None;
         }
 
@@ -466,8 +471,8 @@ impl HeapPage for Page {
                 .unwrap(),
         ) as usize;
 
-        // Deleted slot
-        if freed_len == 0 {
+        // Deleted slot or corrupted metadata
+        if freed_len == 0 || freed_ptr + freed_len > PAGE_SIZE {
             return None;
         }
 
