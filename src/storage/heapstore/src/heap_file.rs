@@ -111,13 +111,13 @@ impl<T: MemPool> HeapFile<T> {
         // Obvious optimizations are possible, like adding indexing.
         // Currently, it is not needed
         for page_id in 1..self.num_pages() {
-            let page = self.get_page_for_write(page_id);
+            let mut page = self.get_page_for_write(page_id);
             if let Some(slot_id) = page.add_value(val) {
                 return Ok(ValueId::new_slot(self.c_id, page_id, slot_id));
             }
         }
         // All existing pages are full (or no data pages exist yet) — allocate a new one.
-        let new_page = self.bp
+        let mut new_page = self.bp
             .create_new_page_for_write(self.c_id)
             .map_err(|e| c_err(&format!("{:?}", e)))?;
         new_page.init_heap_page();
