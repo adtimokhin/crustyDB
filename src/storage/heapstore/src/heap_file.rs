@@ -105,7 +105,27 @@ impl<T: MemPool> HeapFile<T> {
     // This function is not implemented in a thread-safe way. Can cause deadlocks when used in a multi-threaded environment.
     // We do not care about this for now.
     pub fn add_val(&self, val: &[u8]) -> Result<ValueId, CrustyError> {
-        panic!("TODO milestone hs");
+        // Linear scan of existing data pages
+        // (page 0 is the header; data starts at 1).
+        //
+        // Obvious optimizations are possible, like adding indexing.
+        // Currently, it is not needed
+        for page_id in 1..self.num_pages() {
+            let page = self.get_page_for_write(page_id);
+            if let Some(slot_id) = page.add_value(val) {
+                return Ok(ValueId::new_slot(self.c_id, page_id, slot_id));
+            }
+        }
+        // All existing pages are full (or no data pages exist yet) — allocate a new one.
+        let new_page = self.bp
+            .create_new_page_for_write(self.c_id)
+            .map_err(|e| c_err(&format!("{:?}", e)))?;
+        new_page.init_heap_page();
+        let page_id = new_page.get_page_id();
+        let slot_id = new_page
+            .add_value(val)
+            .ok_or_else(|| c_err("Value too large to fit in a single page"))?;
+        Ok(ValueId::new_slot(self.c_id, page_id, slot_id))
     }
 
     pub fn add_vals(
