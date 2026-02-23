@@ -26,7 +26,12 @@ pub struct StorageManager {
 impl StorageManager {
     /// Get the heapfile for a given container id
     fn get_heapfile(&self, c_id: ContainerId) -> Result<Arc<HF>, CrustyError> {
-        panic!("TODO milestone hs");
+        self.cid_heapfile_map
+            .read()
+            .unwrap()
+            .get(&c_id)
+            .cloned()
+            .ok_or_else(|| c_err(&format!("Container {} not found", c_id)))
     }
 
     /// Get the number of pages for a container
@@ -59,8 +64,8 @@ impl StorageTrait for StorageManager {
         // For each file in the cfc, create a heapfile object
         let mut hf_map = HashMap::new();
         for c_id in cfc.container_ids() {
-            //TODO milestone hs
-            // Load the heapfile and add it to hf_map
+            let hf = Arc::new(HeapFile::load(c_id, bp.clone()).unwrap());
+            hf_map.insert(c_id, hf);
         }
 
         StorageManager {
@@ -95,7 +100,8 @@ impl StorageTrait for StorageManager {
     /// Reference: Riki's implementation in the `tpch` branch.
     fn insert_value(&self, c_id: ContainerId, value: Vec<u8>, _tid: TransactionId) -> ValueId {
         trace!("Inserting len: {} into container: {}", value.len(), c_id);
-        panic!("TODO milestone hs");
+        let hf = self.get_heapfile(c_id).unwrap();
+        hf.add_val(&value).unwrap()
     }
 
     /// Insert some bytes into a container for vector of values (e.g. record).
@@ -109,7 +115,8 @@ impl StorageTrait for StorageManager {
         _tid: TransactionId,
     ) -> Vec<ValueId> {
         trace!("Inserting len: {} into container: {}", values.len(), c_id);
-        panic!("TODO milestone hs");
+        let hf = self.get_heapfile(c_id).unwrap();
+        hf.add_vals(values.into_iter()).unwrap()
     }
 
     /// Delete the data for a value. If the valueID is not found it returns Ok() still.
@@ -117,7 +124,8 @@ impl StorageTrait for StorageManager {
         trace!("Deleting {:?}", id);
         let page_id = id.page_id.ok_or(c_err("Need page id"))?;
         let slot_id = id.slot_id.ok_or(c_err("Need slot id"))?;
-        panic!("TODO milestone hs");
+        let hf = self.get_heapfile(id.container_id)?;
+        hf.delete_val(page_id, slot_id)
     }
 
     /// Updates a value. Returns valueID on update (which may have changed). Error on failure
@@ -132,7 +140,8 @@ impl StorageTrait for StorageManager {
         trace!("Updating {:?}", id);
         let page_id = id.page_id.ok_or(c_err("Need page id"))?;
         let slot_id = id.slot_id.ok_or(c_err("Need slot id"))?;
-        panic!("TODO milestone hs");
+        let hf = self.get_heapfile(id.container_id)?;
+        hf.update_val(page_id, slot_id, &value)
     }
 
     /// Create a new container to be stored.
@@ -156,7 +165,13 @@ impl StorageTrait for StorageManager {
         // Otherwise create a new container and add it to the map.
         // Call create_container in the buffer pool to create the container there.
         // Initialize the container as a heapfile amd add to the cid_heapfile_map
-        panic!("TODO milestone hs");
+        let mut map = self.cid_heapfile_map.write().unwrap();
+        if map.contains_key(&container_id) {
+            return Err(c_err("Container already exists"));
+        }
+        let hf = Arc::new(HeapFile::new(container_id, self.bp.clone())?);
+        map.insert(container_id, hf);
+        Ok(())
     }
 
     /// A wrapper function to call create container
@@ -178,8 +193,8 @@ impl StorageTrait for StorageManager {
         _tid: TransactionId,
         _perm: Permissions,
     ) -> Self::ValIterator {
-        // Get and return the HeapFileIter
-        panic!("TODO milestone hs");
+        let hf = self.get_heapfile(container_id).unwrap();
+        hf.iter()
     }
 
     /// Get an iterator that returns all valid records starting from a particular value id
@@ -194,7 +209,8 @@ impl StorageTrait for StorageManager {
         assert_eq!(c_id, container_id);
         let page_id = start.page_id.ok_or(c_err("Need page id")).unwrap();
         let slot_id = start.slot_id.ok_or(c_err("Need slot id")).unwrap();
-        panic!("TODO milestone hs");
+        let hf = self.get_heapfile(container_id).unwrap();
+        hf.iter_from(page_id, slot_id)
     }
 
     /// Get the data for a particular ValueId. Error if does not exists
@@ -207,7 +223,8 @@ impl StorageTrait for StorageManager {
         let c_id = id.container_id;
         let page_id = id.page_id.ok_or(c_err("Need page id"))?;
         let slot_id = id.slot_id.ok_or(c_err("Need slot id"))?;
-        panic!("TODO milestone hs");
+        let hf = self.get_heapfile(c_id)?;
+        hf.get_val(page_id, slot_id)
     }
 
     /// Testing utility to reset all state associated the storage manager. Deletes all data in
