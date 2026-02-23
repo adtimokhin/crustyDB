@@ -117,7 +117,8 @@ impl<T: MemPool> HeapFile<T> {
             }
         }
         // All existing pages are full (or no data pages exist yet) — allocate a new one.
-        let mut new_page = self.bp
+        let mut new_page = self
+            .bp
             .create_new_page_for_write(self.c_id)
             .map_err(|e| c_err(&format!("{:?}", e)))?;
         new_page.init_heap_page();
@@ -223,7 +224,10 @@ impl<T: MemPool> Iterator for HeapFileIter<T> {
                 let slot_id = self.current_slot_id;
                 self.current_slot_id += 1;
                 // .to_vec() produces owned Vec<u8>; borrow of current_page ends here
-                let val_opt = self.current_page.as_ref().unwrap()
+                let val_opt = self
+                    .current_page
+                    .as_ref()
+                    .unwrap()
                     .get_value(slot_id)
                     .map(|v| v.to_vec());
                 if let Some(val) = val_opt {
