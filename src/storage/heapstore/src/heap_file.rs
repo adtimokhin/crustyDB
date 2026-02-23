@@ -54,6 +54,13 @@ impl<T: MemPool> HeapFile<T> {
     pub fn load(c_id: ContainerId, mem_pool: Arc<T>) -> Result<Self, CrustyError> {
         // Add any extra initialization code in this function.
 
+        // Maybe this implementation?
+        // Ok(HeapFile {
+        //     c_id,
+        //     bp: mem_pool,
+        // })
+
+        // OG implementation
         let heap_file = HeapFile {
             c_id,
             bp: mem_pool.clone(),
