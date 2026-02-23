@@ -38,12 +38,15 @@ impl<T: MemPool> HeapFile<T> {
         // Note that the header page is always page 0, and the data pages start from 1.
         // You may not end up using the header page, but some tests will assume this.
 
-        // Add any extra initialization code in this function.
-
         let heap_file = HeapFile {
             c_id,
             bp: mem_pool.clone(),
         };
+        // Allocate page 0 as the header page. Content is left zeroed.
+        // Dropping the guard marks it dirty so the buffer pool persists it on eviction.
+        let _header = mem_pool
+            .create_new_page_for_write(c_id)
+            .map_err(|e| c_err(&format!("{:?}", e)))?;
         Ok(heap_file)
     }
 
