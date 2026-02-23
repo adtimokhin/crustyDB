@@ -77,6 +77,9 @@ impl<T: MemPool> HeapFile<T> {
 
     /// Read a value at (page_id, slot_id) from the heap file.
     pub fn get_val(&self, page_id: PageId, slot_id: SlotId) -> Result<Vec<u8>, CrustyError> {
+        if page_id >= self.num_pages() {
+            return Err(c_err("Page not found"));
+        }
         let page = self.get_page_for_read(page_id);
         page.get_value(slot_id)
             .map(|v| v.to_vec())
@@ -85,6 +88,9 @@ impl<T: MemPool> HeapFile<T> {
 
     // Delete a value at (page_id, slot_id) from the heap file.
     pub fn delete_val(&self, page_id: PageId, slot_id: SlotId) -> Result<(), CrustyError> {
+        if page_id >= self.num_pages() {
+            return Err(c_err("Page not found"));
+        }
         let mut page = self.get_page_for_write(page_id);
         page.delete_value(slot_id)
             .ok_or_else(|| c_err("Value not found or already deleted"))
@@ -96,6 +102,9 @@ impl<T: MemPool> HeapFile<T> {
         slot_id: SlotId,
         val: &[u8],
     ) -> Result<ValueId, CrustyError> {
+        if page_id >= self.num_pages() {
+            return Err(c_err("Page not found"));
+        }
         let mut page = self.get_page_for_write(page_id);
         page.update_value(slot_id, val)
             .ok_or_else(|| c_err("Update failed: slot invalid or insufficient space"))?;
