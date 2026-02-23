@@ -86,7 +86,8 @@ impl<T: MemPool> HeapFile<T> {
     // Delete a value at (page_id, slot_id) from the heap file.
     pub fn delete_val(&self, page_id: PageId, slot_id: SlotId) -> Result<(), CrustyError> {
         let mut page = self.get_page_for_write(page_id);
-        panic!("TODO milestone hs");
+        page.delete_value(slot_id)
+            .ok_or_else(|| c_err("Value not found or already deleted"))
     }
 
     pub fn update_val(
