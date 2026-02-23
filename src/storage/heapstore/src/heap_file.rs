@@ -78,7 +78,9 @@ impl<T: MemPool> HeapFile<T> {
     /// Read a value at (page_id, slot_id) from the heap file.
     pub fn get_val(&self, page_id: PageId, slot_id: SlotId) -> Result<Vec<u8>, CrustyError> {
         let page = self.get_page_for_read(page_id);
-        panic!("TODO milestone hs");
+        page.get_value(slot_id)
+            .map(|v| v.to_vec())
+            .ok_or_else(|| c_err("Value not found"))
     }
 
     // Delete a value at (page_id, slot_id) from the heap file.
