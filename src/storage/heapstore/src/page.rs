@@ -39,7 +39,7 @@ pub const CHECKSUM_OFFSET: usize = LSN_SLOT_OFFSET + SLOT_ID_SIZE;
 /// The number of bytes reserved for the fixed header of all pages.
 pub const PAGE_FIXED_HEADER_LEN: usize = 16;
 
-// PG MS Add any additional header fields or constants/metadata you need here.
+// PG MS Add any additional header fields or constants/metadata you neeed here.
 
 #[cfg(test)]
 const _: () = {
