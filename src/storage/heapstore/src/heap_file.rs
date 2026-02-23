@@ -110,14 +110,13 @@ impl<T: MemPool> HeapFile<T> {
             if page.update_value(slot_id, val).is_some() {
                 return Ok(ValueId::new_slot(self.c_id, page_id, slot_id));
             }
-            // Distinguish "slot not found / deleted" from "no space on page"
             if page.get_value(slot_id).is_none() {
                 return Err(c_err("Update failed: slot not found"));
             }
-            // Slot exists but value doesn't fit in place — delete to free space
             page.delete_value(slot_id)
                 .ok_or_else(|| c_err("Delete failed during update fallback"))?;
-        } // write guard dropped here — page latch released before add_val
+        }
+        // write guard dropped here — page latch released before add_val
         // Re-insert on any page that has room (may return a different ValueId)
         self.add_val(val)
     }
