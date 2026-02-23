@@ -1,6 +1,13 @@
 [workspace]
 members = [
+    "src/cli-crusty",
     "src/common",
+    "src/index",
     "src/storage",
+    "src/optimizer",
+    "src/queryexe",
+    "src/server",
+    "src/txn_manager",
+    "src/utilities",
 ]
 resolver = "2"
