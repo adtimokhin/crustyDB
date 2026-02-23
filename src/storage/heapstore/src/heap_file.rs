@@ -105,10 +105,21 @@ impl<T: MemPool> HeapFile<T> {
         if page_id >= self.num_pages() {
             return Err(c_err("Page not found"));
         }
-        let mut page = self.get_page_for_write(page_id);
-        page.update_value(slot_id, val)
-            .ok_or_else(|| c_err("Update failed: slot invalid or insufficient space"))?;
-        Ok(ValueId::new_slot(self.c_id, page_id, slot_id))
+        {
+            let mut page = self.get_page_for_write(page_id);
+            if page.update_value(slot_id, val).is_some() {
+                return Ok(ValueId::new_slot(self.c_id, page_id, slot_id));
+            }
+            // Distinguish "slot not found / deleted" from "no space on page"
+            if page.get_value(slot_id).is_none() {
+                return Err(c_err("Update failed: slot not found"));
+            }
+            // Slot exists but value doesn't fit in place — delete to free space
+            page.delete_value(slot_id)
+                .ok_or_else(|| c_err("Delete failed during update fallback"))?;
+        } // write guard dropped here — page latch released before add_val
+        // Re-insert on any page that has room (may return a different ValueId)
+        self.add_val(val)
     }
 
     // This function is not implemented in a thread-safe way. Can cause deadlocks when used in a multi-threaded environment.
