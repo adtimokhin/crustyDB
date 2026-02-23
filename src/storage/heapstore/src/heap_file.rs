@@ -96,7 +96,7 @@ impl<T: MemPool> HeapFile<T> {
         slot_id: SlotId,
         val: &[u8],
     ) -> Result<ValueId, CrustyError> {
-        let page = self.get_page_for_write(page_id);
+        let mut page = self.get_page_for_write(page_id);
         page.update_value(slot_id, val)
             .ok_or_else(|| c_err("Update failed: slot invalid or insufficient space"))?;
         Ok(ValueId::new_slot(self.c_id, page_id, slot_id))
