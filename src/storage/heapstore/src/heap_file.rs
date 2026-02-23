@@ -96,8 +96,10 @@ impl<T: MemPool> HeapFile<T> {
         slot_id: SlotId,
         val: &[u8],
     ) -> Result<ValueId, CrustyError> {
-        let mut page = self.get_page_for_write(page_id);
-        panic!("TODO milestone hs");
+        let page = self.get_page_for_write(page_id);
+        page.update_value(slot_id, val)
+            .ok_or_else(|| c_err("Update failed: slot invalid or insufficient space"))?;
+        Ok(ValueId::new_slot(self.c_id, page_id, slot_id))
     }
 
     // This function is not implemented in a thread-safe way. Can cause deadlocks when used in a multi-threaded environment.
