@@ -142,24 +142,20 @@ impl<T: MemPool> HeapFile<T> {
     }
 
     pub fn iter(self: &Arc<Self>) -> HeapFileIter<T> {
-        // Create the HeapFileIter
-        panic!("TODO milestone hs");
+        HeapFileIter::new_from(self.clone(), 1, 0)
     }
 
     pub fn iter_from(self: &Arc<Self>, page_id: PageId, slot_id: SlotId) -> HeapFileIter<T> {
-        // Create the HeapFileIter
-        panic!("TODO milestone hs");
+        HeapFileIter::new_from(self.clone(), page_id, slot_id)
     }
 }
 
 pub struct HeapFileIter<T: MemPool> {
-    /// We are providing the elements of the iterator that we used, you are allowed to
-    /// use them in the iterator or make changes. If you change the elements, you
-    /// will want to change the new_from constructor to use the new elements.
     heapfile: Arc<HeapFile<T>>,
     initialized: bool,
     finished: bool,
     first_page: PageId,
+    current_page_id: PageId,
     current_slot_id: SlotId,
     current_page: Option<FrameReadGuard<'static>>,
 }
@@ -171,6 +167,7 @@ impl<T: MemPool> HeapFileIter<T> {
             initialized: false,
             finished: false,
             first_page: page_id,
+            current_page_id: page_id,
             current_slot_id: slot_id,
             current_page: None,
         }
@@ -189,7 +186,11 @@ impl<T: MemPool> HeapFileIter<T> {
         if self.initialized {
             return;
         }
-        // If any work is needed to be done to initialize the iterator, do it here.
+        if self.first_page < self.heapfile.num_pages() {
+            self.current_page = Some(self.get_page(self.first_page));
+        } else {
+            self.finished = true;
+        }
         self.initialized = true;
     }
 }
@@ -208,7 +209,41 @@ impl<T: MemPool> Iterator for HeapFileIter<T> {
             self.initialize();
         }
 
-        // Implement the iterator logic
-        panic!("TODO milestone hs");
+        if self.finished {
+            return None;
+        }
+        loop {
+            if self.current_page.is_none() {
+                return None;
+            }
+            // u16 is Copy — borrow of current_page ends immediately
+            let num_slots = self.current_page.as_ref().unwrap().get_num_slots();
+
+            if self.current_slot_id < num_slots {
+                let slot_id = self.current_slot_id;
+                self.current_slot_id += 1;
+                // .to_vec() produces owned Vec<u8>; borrow of current_page ends here
+                let val_opt = self.current_page.as_ref().unwrap()
+                    .get_value(slot_id)
+                    .map(|v| v.to_vec());
+                if let Some(val) = val_opt {
+                    return Some((
+                        val,
+                        ValueId::new_slot(self.heapfile.c_id, self.current_page_id, slot_id),
+                    ));
+                }
+                // Deleted slot — continue to next slot_id
+            } else {
+                // Page exhausted — advance to next data page
+                self.current_slot_id = 0;
+                self.current_page = None; // drop FrameReadGuard, releases read latch
+                self.current_page_id += 1;
+                if self.current_page_id >= self.heapfile.num_pages() {
+                    self.finished = true;
+                    return None;
+                }
+                self.current_page = Some(self.get_page(self.current_page_id));
+            }
+        }
     }
 }
