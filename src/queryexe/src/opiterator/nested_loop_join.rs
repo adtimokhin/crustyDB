@@ -58,17 +58,41 @@ impl OpIterator for NestedLoopJoin {
     }
 
     fn open(&mut self) -> Result<(), CrustyError> {
-        panic!("TODO milestone op");
+        if !self.open {
+            self.left_child.open()?;
+            self.right_child.open()?;
+            self.current_tuple = self.left_child.next()?;
+            self.open = true;
+        }
+        Ok(())
     }
 
     /// Calculates the next tuple for a nested loop join.
     /// hint look at `compare_fields` and `Tuple.merge` functions
     fn next(&mut self) -> Result<Option<Tuple>, CrustyError> {
-        panic!("TODO milestone op");
+        if !self.open {
+            panic!("Operator has not been opened")
+        }
+        while let Some(left_tuple) = self.current_tuple.clone() {
+            if let Some(right_tuple) = self.right_child.next()? {
+                let left_val = self.left_expr.eval(&left_tuple);
+                let right_val = self.right_expr.eval(&right_tuple);
+                if compare_fields(self.op, &left_val, &right_val) {
+                    return Ok(Some(left_tuple.merge(&right_tuple)));
+                }
+            } else {
+                self.right_child.rewind()?;
+                self.current_tuple = self.left_child.next()?;
+            }
+        }
+        Ok(None)
     }
 
     fn close(&mut self) -> Result<(), CrustyError> {
-        panic!("TODO milestone op");
+        self.left_child.close()?;
+        self.right_child.close()?;
+        self.open = false;
+        Ok(())
     }
 
     fn rewind(&mut self) -> Result<(), CrustyError> {
