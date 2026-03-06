@@ -43,7 +43,18 @@ impl HashEqJoin {
         left_child: Box<dyn OpIterator>,
         right_child: Box<dyn OpIterator>,
     ) -> Self {
-        panic!("TODO milestone op");
+        Self {
+            managers,
+            schema,
+            left_expr,
+            right_expr,
+            left_child,
+            right_child,
+            open: false,
+            join_map: HashMap::new(),
+            current_tuple: None,
+            current_idx: 0,
+        }
     }
 }
 
@@ -54,15 +65,47 @@ impl OpIterator for HashEqJoin {
     }
 
     fn open(&mut self) -> Result<(), CrustyError> {
-        panic!("TODO milestone op");
+        if !self.open {
+            self.left_child.open()?;
+            while let Some(t) = self.left_child.next()? {
+                let key = self.left_expr.eval(&t);
+                self.join_map.entry(key).or_default().push(t);
+            }
+            self.right_child.open()?;
+            self.current_tuple = self.right_child.next()?;
+            self.current_idx = 0;
+            self.open = true;
+        }
+        Ok(())
     }
 
     fn next(&mut self) -> Result<Option<Tuple>, CrustyError> {
-        panic!("TODO milestone op");
+        if !self.open {
+            panic!("Operator has not been opened")
+        }
+        while let Some(right_tuple) = self.current_tuple.clone() {
+            let right_key = self.right_expr.eval(&right_tuple);
+            if let Some(bucket) = self.join_map.get(&right_key) {
+                if self.current_idx < bucket.len() {
+                    let left_tuple = bucket[self.current_idx].clone();
+                    self.current_idx += 1;
+                    return Ok(Some(left_tuple.merge(&right_tuple)));
+                }
+            }
+            self.current_tuple = self.right_child.next()?;
+            self.current_idx = 0;
+        }
+        Ok(None)
     }
 
     fn close(&mut self) -> Result<(), CrustyError> {
-        panic!("TODO milestone op");
+        self.left_child.close()?;
+        self.right_child.close()?;
+        self.join_map.clear();
+        self.current_tuple = None;
+        self.current_idx = 0;
+        self.open = false;
+        Ok(())
     }
 
     fn rewind(&mut self) -> Result<(), CrustyError> {
