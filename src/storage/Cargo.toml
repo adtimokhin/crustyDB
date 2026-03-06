@@ -12,4 +12,5 @@ doctest = false
 rstest = "0.18"
 tempfile = "3.9"
 heapstore = { path = "./heapstore" }
+memstore = { path = "./memstore" }
 common = { path = "../common" }

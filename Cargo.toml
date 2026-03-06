@@ -10,4 +10,8 @@ members = [
     "src/txn_manager",
     "src/utilities",
 ]
+
+exclude = [
+    "e2e-tests",
+]
 resolver = "2"
