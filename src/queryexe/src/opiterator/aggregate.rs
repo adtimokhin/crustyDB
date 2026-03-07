@@ -131,12 +131,15 @@ impl Aggregate {
                 Self::merge_fields(*op, &agg_vals[i], &mut entry.1[i]).unwrap();
             }
         } else {
-            let init: Vec<Field> = self.ops.iter().zip(agg_vals.iter()).map(|(op, val)| {
-                match op {
+            let init: Vec<Field> = self
+                .ops
+                .iter()
+                .zip(agg_vals.iter())
+                .map(|(op, val)| match op {
                     AggOp::Count => Field::BigInt(1),
                     _ => val.clone(),
-                }
-            }).collect();
+                })
+                .collect();
             self.acc.insert(group_key, (1, init));
         }
     }
@@ -155,15 +158,19 @@ impl OpIterator for Aggregate {
             while let Some(t) = self.child.next()? {
                 self.merge_tuple_into_group(&t);
             }
-            let mut entries: Vec<_> = self.acc
+            let mut entries: Vec<_> = self
+                .acc
                 .iter()
                 .map(|(k, (cnt, vals))| (k.clone(), *cnt, vals.clone()))
                 .collect();
             entries.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
             for (group_key, count, agg_vals) in entries {
-                let final_agg: Vec<Field> = self.ops.iter().zip(agg_vals.iter()).map(|(op, val)| {
-                    match op {
+                let final_agg: Vec<Field> = self
+                    .ops
+                    .iter()
+                    .zip(agg_vals.iter())
+                    .map(|(op, val)| match op {
                         AggOp::Avg => {
                             let sum = match val {
                                 Field::BigInt(v) => *v as f64,
@@ -174,8 +181,8 @@ impl OpIterator for Aggregate {
                             f_decimal(sum / count as f64)
                         }
                         _ => val.clone(),
-                    }
-                }).collect();
+                    })
+                    .collect();
                 let mut fields = group_key;
                 fields.extend(final_agg);
                 self.acc_iter.push(Tuple::new(fields));
