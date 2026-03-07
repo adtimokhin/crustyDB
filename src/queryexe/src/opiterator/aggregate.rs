@@ -122,7 +122,23 @@ impl Aggregate {
             .iter()
             .map(|expr| expr.eval(tuple))
             .collect::<Vec<Field>>();
-        panic!("TODO milestone op");
+
+        let agg_vals: Vec<Field> = self.agg_expr.iter().map(|e| e.eval(tuple)).collect();
+
+        if let Some(entry) = self.acc.get_mut(&group_key) {
+            entry.0 += 1;
+            for (i, op) in self.ops.iter().enumerate() {
+                Self::merge_fields(*op, &agg_vals[i], &mut entry.1[i]).unwrap();
+            }
+        } else {
+            let init: Vec<Field> = self.ops.iter().zip(agg_vals.iter()).map(|(op, val)| {
+                match op {
+                    AggOp::Count => Field::BigInt(1),
+                    _ => val.clone(),
+                }
+            }).collect();
+            self.acc.insert(group_key, (1, init));
+        }
     }
 }
 
@@ -134,15 +150,29 @@ impl OpIterator for Aggregate {
     }
 
     fn open(&mut self) -> Result<(), CrustyError> {
-        panic!("TODO milestone op");
+        
     }
 
     fn next(&mut self) -> Result<Option<Tuple>, CrustyError> {
-        panic!("TODO milestone op");
+        if !self.open {
+            panic!("Operator has not been opened")
+        }
+        if self.index < self.acc_iter.len() {
+            let t = self.acc_iter[self.index].clone();
+            self.index += 1;
+            Ok(Some(t))
+        } else {
+            Ok(None)
+        }
     }
 
     fn close(&mut self) -> Result<(), CrustyError> {
-        panic!("TODO milestone op");
+        self.child.close()?;
+        self.acc.clear();
+        self.acc_iter.clear();
+        self.index = 0;
+        self.open = false;
+        Ok(())
     }
 
     fn rewind(&mut self) -> Result<(), CrustyError> {
