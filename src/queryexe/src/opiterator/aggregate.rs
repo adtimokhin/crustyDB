@@ -150,7 +150,40 @@ impl OpIterator for Aggregate {
     }
 
     fn open(&mut self) -> Result<(), CrustyError> {
-        
+        if !self.open {
+            self.child.open()?;
+            while let Some(t) = self.child.next()? {
+                self.merge_tuple_into_group(&t);
+            }
+            let mut entries: Vec<_> = self.acc
+                .iter()
+                .map(|(k, (cnt, vals))| (k.clone(), *cnt, vals.clone()))
+                .collect();
+            entries.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+            for (group_key, count, agg_vals) in entries {
+                let final_agg: Vec<Field> = self.ops.iter().zip(agg_vals.iter()).map(|(op, val)| {
+                    match op {
+                        AggOp::Avg => {
+                            let sum = match val {
+                                Field::BigInt(v) => *v as f64,
+                                Field::Int(v) => *v as f64,
+                                Field::SmallInt(v) => *v as f64,
+                                _ => panic!("AVG requires numeric fields"),
+                            };
+                            f_decimal(sum / count as f64)
+                        }
+                        _ => val.clone(),
+                    }
+                }).collect();
+                let mut fields = group_key;
+                fields.extend(final_agg);
+                self.acc_iter.push(Tuple::new(fields));
+            }
+            self.index = 0;
+            self.open = true;
+        }
+        Ok(())
     }
 
     fn next(&mut self) -> Result<Option<Tuple>, CrustyError> {
