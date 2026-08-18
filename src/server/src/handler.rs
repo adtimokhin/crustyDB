@@ -154,7 +154,7 @@ pub fn run_database_command(
     match database_command {
         DBCommand::ExecuteSQL => {
             let sql = command_args.first().expect("SQL not provided").to_string();
-            let mut conductor = Conductor::new_from_tid(db.managers, tid)?;
+            let mut conductor = Conductor::new_from_tid(db.managers, tid, db.catalog.clone())?;
             let qr = if let Some(query_result) = db.query_result_from_sql(&sql)? {
                 info!("Fetched registered query result");
                 query_result
@@ -179,7 +179,7 @@ pub fn run_database_command(
             let file_path_str = command_args.first().expect("file_path not provided");
             let file_path = Path::new(file_path_str);
 
-            let mut conductor = Conductor::new_from_tid(db.managers, tid)?;
+            let mut conductor = Conductor::new_from_tid(db.managers, tid, db.catalog.clone())?;
             let qr = conductor.import_csv(table_name, file_path, db)?;
 
             // HACK: until committing is properly implemented, we will manually increment the working tid so that insertion is isolated into one txn
@@ -206,7 +206,7 @@ pub fn run_database_command(
         DBCommand::RegisterQuery => {
             let query_name = command_args.first().expect("Query name not provided");
             let query = command_args.get(1).expect("Query not provided");
-            let mut conductor = Conductor::new_from_tid(db.managers, tid)?;
+            let mut conductor = Conductor::new_from_tid(db.managers, tid, db.catalog.clone())?;
 
             let maybe_cached = db.query_result_from_sql(query)?;
             let qr = match maybe_cached {

@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     ids::{ColumnId, ContainerId},
+    physical::TupleAssignments,
     physical_expr::physical_rel_expr::PhysicalRelExpr,
     query::{expr::Expression, join_type::JoinType},
     traits::plan::Plan,
@@ -16,6 +17,31 @@ pub enum LogicalRelExpr {
         cid: ContainerId,
         table_name: String,
         column_names: Vec<ColumnId>,
+    },
+    /// A point lookup into a secondary/primary B+Tree index, in place of a
+    /// full `Scan`. Produced only by the translator's index-matching rule
+    /// (see `Translator::process_where`) when every column of some index on
+    /// this table has an equality predicate in the WHERE clause. Carries the
+    /// same `column_names` attribute contract as `Scan` so everything above
+    /// it (Rename, Project, ...) is unaffected by the substitution.
+    IndexScan {
+        cid: ContainerId,
+        table_name: String,
+        column_names: Vec<ColumnId>,
+        index_id: ContainerId,
+        /// One literal value per index column, in the index's column order.
+        key_values: Vec<Expression<Self>>,
+    },
+    /// `DELETE FROM table_name WHERE ...` — src is `Select(Scan(table), predicates)`.
+    Delete {
+        table_id: ContainerId,
+        src: Box<LogicalRelExpr>,
+    },
+    /// `UPDATE table_name SET ... WHERE ...` — src is `Select(Scan(table), predicates)`.
+    Update {
+        table_id: ContainerId,
+        src: Box<LogicalRelExpr>,
+        assignments: TupleAssignments,
     },
     Select {
         // Evaluate the predicate for each row in the source
@@ -81,6 +107,38 @@ impl Plan for LogicalRelExpr {
                     column_names,
                 }
             }
+            LogicalRelExpr::IndexScan {
+                cid,
+                table_name,
+                column_names,
+                index_id,
+                key_values,
+            } => {
+                let column_names = column_names
+                    .into_iter()
+                    .map(|col| *src_to_dest.get(&col).unwrap_or(&col))
+                    .collect();
+                LogicalRelExpr::IndexScan {
+                    cid,
+                    table_name,
+                    column_names,
+                    index_id,
+                    key_values,
+                }
+            }
+            LogicalRelExpr::Delete { table_id, src } => LogicalRelExpr::Delete {
+                table_id,
+                src: Box::new(src.replace_variables(src_to_dest)),
+            },
+            LogicalRelExpr::Update {
+                table_id,
+                src,
+                assignments,
+            } => LogicalRelExpr::Update {
+                table_id,
+                src: Box::new(src.replace_variables(src_to_dest)),
+                assignments,
+            },
             LogicalRelExpr::Select { src, predicates } => LogicalRelExpr::Select {
                 src: Box::new(src.replace_variables(src_to_dest)),
                 predicates: predicates
@@ -188,6 +246,35 @@ impl Plan for LogicalRelExpr {
                     split = ", ";
                 }
                 out.push_str("])\n");
+            }
+            LogicalRelExpr::IndexScan {
+                table_name,
+                column_names,
+                index_id,
+                ..
+            } => {
+                out.push_str(&format!(
+                    "{}-> index_scan({:?}, index={}, ",
+                    " ".repeat(indent),
+                    table_name,
+                    index_id
+                ));
+                let mut split = "";
+                out.push('[');
+                for col in column_names {
+                    out.push_str(split);
+                    out.push_str(&format!("@{}", col));
+                    split = ", ";
+                }
+                out.push_str("])\n");
+            }
+            LogicalRelExpr::Delete { table_id, src } => {
+                out.push_str(&format!("{}-> delete(table={})\n", " ".repeat(indent), table_id));
+                src.print_inner(indent + 2, out);
+            }
+            LogicalRelExpr::Update { table_id, src, .. } => {
+                out.push_str(&format!("{}-> update(table={})\n", " ".repeat(indent), table_id));
+                src.print_inner(indent + 2, out);
             }
             LogicalRelExpr::Select { src, predicates } => {
                 out.push_str(&format!("{}-> select(", " ".repeat(indent)));
@@ -303,6 +390,15 @@ impl Plan for LogicalRelExpr {
     fn free(&self) -> HashSet<ColumnId> {
         match self {
             LogicalRelExpr::Scan { .. } => HashSet::new(),
+            LogicalRelExpr::IndexScan { key_values, .. } => {
+                let mut set = HashSet::new();
+                for kv in key_values {
+                    set.extend(kv.free());
+                }
+                set
+            }
+            LogicalRelExpr::Delete { src, .. } => src.free(),
+            LogicalRelExpr::Update { src, .. } => src.free(),
             LogicalRelExpr::Select { src, predicates } => {
                 // For each predicate, identify the free columns.
                 // Take the set difference of the free columns and the src attribute set.
@@ -386,6 +482,9 @@ impl Plan for LogicalRelExpr {
                 table_name: _,
                 column_names,
             } => column_names.iter().cloned().collect(),
+            LogicalRelExpr::IndexScan { column_names, .. } => column_names.iter().cloned().collect(),
+            LogicalRelExpr::Delete { src, .. } => src.att(),
+            LogicalRelExpr::Update { src, .. } => src.att(),
             LogicalRelExpr::Select { src, .. } => src.att(),
             LogicalRelExpr::Join { left, right, .. } => {
                 let mut set = left.att();
@@ -449,6 +548,33 @@ impl LogicalRelExpr {
                 column_names: column_names.clone(),
                 tree_hash: None,
             },
+            Self::IndexScan {
+                cid,
+                table_name,
+                column_names,
+                index_id,
+                key_values,
+            } => PhysicalRelExpr::IndexScan {
+                cid: *cid,
+                table_name: table_name.clone(),
+                column_names: column_names.clone(),
+                index_id: *index_id,
+                key_values: key_values.iter().map(|e| e.to_physical_expression()).collect(),
+                tree_hash: None,
+            },
+            Self::Delete { table_id, src } => PhysicalRelExpr::Delete {
+                table_id: *table_id,
+                src: Box::new(src.to_physical_plan()),
+            },
+            Self::Update {
+                table_id,
+                src,
+                assignments,
+            } => PhysicalRelExpr::Update {
+                table_id: *table_id,
+                src: Box::new(src.to_physical_plan()),
+                assignments: assignments.clone(),
+            },
             Self::Select { src, predicates } => PhysicalRelExpr::Select {
                 src: Box::new(src.to_physical_plan()),
                 predicates: predicates
@@ -469,26 +595,37 @@ impl LogicalRelExpr {
                     .collect();
                 let predicates = vec![Expression::combine_preds(predicates.as_slice())];
 
-                if predicates.len() == 1 {
-                    if let Expression::Binary {
+                // A single binary equality predicate (not an AND of several
+                // conditions, and not any other operator) is exactly what
+                // `HashEqJoin` supports: build a hash table on one side and
+                // probe with the other, O(n+m) instead of the O(n*m) nested
+                // loop below. `HashJoin` only supports `JoinType::Inner`
+                // (see planner.rs), matching NestedLoopJoin's own historical
+                // scope (outer joins never reached this rewrite either).
+                let is_single_eq_predicate = matches!(
+                    predicates.as_slice(),
+                    [Expression::Binary {
                         op: crate::BinaryOp::Eq,
-                        left: left_key,
-                        right: right_key,
-                    } = &predicates[0]
-                    {
-                        debug!(
-                            "Join predicate is an binary equality predicate between {:?} and {:?}",
-                            left_key, right_key
-                        );
-                    }
-                }
+                        ..
+                    }]
+                );
 
-                PhysicalRelExpr::NestedLoopJoin {
-                    join_type: *join_type,
-                    left: Box::new(left.to_physical_plan()),
-                    right: Box::new(right.to_physical_plan()),
-                    predicates,
-                    tree_hash: None, // this is only for identification -- not needed for QO
+                if *join_type == JoinType::Inner && is_single_eq_predicate {
+                    PhysicalRelExpr::HashJoin {
+                        join_type: *join_type,
+                        left: Box::new(left.to_physical_plan()),
+                        right: Box::new(right.to_physical_plan()),
+                        predicates,
+                        tree_hash: None,
+                    }
+                } else {
+                    PhysicalRelExpr::NestedLoopJoin {
+                        join_type: *join_type,
+                        left: Box::new(left.to_physical_plan()),
+                        right: Box::new(right.to_physical_plan()),
+                        predicates,
+                        tree_hash: None, // this is only for identification -- not needed for QO
+                    }
                 }
             }
             Self::Project { src, cols } => PhysicalRelExpr::Project {

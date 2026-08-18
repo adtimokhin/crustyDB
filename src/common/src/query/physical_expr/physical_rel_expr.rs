@@ -14,6 +14,7 @@ use crate::{
     error::c_err,
     ids::{ColumnId, ContainerId},
     logical_expr::prelude::{Expression, JoinType},
+    physical::TupleAssignments,
     traits::plan::Plan,
     AggOp, CrustyError,
 };
@@ -25,6 +26,26 @@ pub enum PhysicalRelExpr {
         table_name: String,
         column_names: Vec<ColumnId>,
         tree_hash: Option<u64>, // Optional hash code for representing the plan
+    },
+    /// See `LogicalRelExpr::IndexScan`.
+    IndexScan {
+        cid: ContainerId,
+        table_name: String,
+        column_names: Vec<ColumnId>,
+        index_id: ContainerId,
+        key_values: Vec<Expression<Self>>,
+        tree_hash: Option<u64>,
+    },
+    /// `DELETE FROM table_id WHERE ...`. Always a plan root, never a subplan.
+    Delete {
+        table_id: ContainerId,
+        src: Box<PhysicalRelExpr>,
+    },
+    /// `UPDATE table_id SET ... WHERE ...`. Always a plan root, never a subplan.
+    Update {
+        table_id: ContainerId,
+        src: Box<PhysicalRelExpr>,
+        assignments: TupleAssignments,
     },
     Select {
         // Evaluate the predicate for each row in the source
@@ -124,6 +145,40 @@ impl Plan for PhysicalRelExpr {
                     tree_hash,
                 }
             }
+            PhysicalRelExpr::IndexScan {
+                cid,
+                table_name,
+                column_names,
+                index_id,
+                key_values,
+                tree_hash,
+            } => {
+                let column_names = column_names
+                    .into_iter()
+                    .map(|col| *src_to_dest.get(&col).unwrap_or(&col))
+                    .collect();
+                PhysicalRelExpr::IndexScan {
+                    cid,
+                    table_name,
+                    column_names,
+                    index_id,
+                    key_values,
+                    tree_hash,
+                }
+            }
+            PhysicalRelExpr::Delete { table_id, src } => PhysicalRelExpr::Delete {
+                table_id,
+                src: Box::new(src.replace_variables(src_to_dest)),
+            },
+            PhysicalRelExpr::Update {
+                table_id,
+                src,
+                assignments,
+            } => PhysicalRelExpr::Update {
+                table_id,
+                src: Box::new(src.replace_variables(src_to_dest)),
+                assignments,
+            },
             PhysicalRelExpr::Select {
                 src,
                 predicates,
@@ -311,6 +366,35 @@ impl Plan for PhysicalRelExpr {
                     split = ", ";
                 }
                 out.push_str("])\n");
+            }
+            PhysicalRelExpr::IndexScan {
+                table_name,
+                column_names,
+                index_id,
+                ..
+            } => {
+                out.push_str(&format!(
+                    "{}-> index_scan({:?}, index={}, ",
+                    " ".repeat(indent),
+                    table_name,
+                    index_id
+                ));
+                let mut split = "";
+                out.push('[');
+                for col in column_names {
+                    out.push_str(split);
+                    out.push_str(&format!("@{}", col));
+                    split = ", ";
+                }
+                out.push_str("])\n");
+            }
+            PhysicalRelExpr::Delete { table_id, src } => {
+                out.push_str(&format!("{}-> delete(table={})\n", " ".repeat(indent), table_id));
+                src.print_inner(indent + 2, out);
+            }
+            PhysicalRelExpr::Update { table_id, src, .. } => {
+                out.push_str(&format!("{}-> update(table={})\n", " ".repeat(indent), table_id));
+                src.print_inner(indent + 2, out);
             }
             PhysicalRelExpr::Select {
                 src, predicates, ..
@@ -501,6 +585,15 @@ impl Plan for PhysicalRelExpr {
     fn free(&self) -> HashSet<ColumnId> {
         match self {
             PhysicalRelExpr::Scan { .. } => HashSet::new(),
+            PhysicalRelExpr::IndexScan { key_values, .. } => {
+                let mut set = HashSet::new();
+                for kv in key_values {
+                    set.extend(kv.free());
+                }
+                set
+            }
+            PhysicalRelExpr::Delete { src, .. } => src.free(),
+            PhysicalRelExpr::Update { src, .. } => src.free(),
             PhysicalRelExpr::Select {
                 src, predicates, ..
             } => {
@@ -605,6 +698,9 @@ impl Plan for PhysicalRelExpr {
                 column_names,
                 tree_hash: _,
             } => column_names.iter().cloned().collect(),
+            PhysicalRelExpr::IndexScan { column_names, .. } => column_names.iter().cloned().collect(),
+            PhysicalRelExpr::Delete { src, .. } => src.att(),
+            PhysicalRelExpr::Update { src, .. } => src.att(),
             PhysicalRelExpr::Select { src, .. } => src.att(),
             PhysicalRelExpr::CrossJoin { left, right, .. }
             | PhysicalRelExpr::NestedLoopJoin { left, right, .. }
@@ -669,7 +765,7 @@ impl PhysicalRelExpr {
 
     /// Get all tables involved in expression
     pub fn get_tables_involved(&self, container_ids: &mut Vec<ContainerId>) {
-        if let PhysicalRelExpr::Scan { cid, .. } = self {
+        if let PhysicalRelExpr::Scan { cid, .. } | PhysicalRelExpr::IndexScan { cid, .. } = self {
             container_ids.push(*cid);
         }
 
@@ -679,6 +775,8 @@ impl PhysicalRelExpr {
         | PhysicalRelExpr::HashAggregate { src, .. }
         | PhysicalRelExpr::Map { input: src, .. }
         | PhysicalRelExpr::FlatMap { input: src, .. }
+        | PhysicalRelExpr::Delete { src, .. }
+        | PhysicalRelExpr::Update { src, .. }
         | PhysicalRelExpr::Rename { src, .. } = self
         {
             src.get_tables_involved(container_ids);
@@ -700,7 +798,11 @@ impl PhysicalRelExpr {
 
     fn set_tree_hash(&mut self, hash_val: u64) -> Result<(), CrustyError> {
         match self {
+            PhysicalRelExpr::Delete { .. } | PhysicalRelExpr::Update { .. } => Err(c_err(
+                "set_tree_hash not applicable to Delete/Update (always plan roots)",
+            )),
             PhysicalRelExpr::Scan { tree_hash, .. }
+            | PhysicalRelExpr::IndexScan { tree_hash, .. }
             | PhysicalRelExpr::Select { tree_hash, .. }
             | PhysicalRelExpr::CrossJoin { tree_hash, .. }
             | PhysicalRelExpr::NestedLoopJoin { tree_hash, .. }
@@ -714,14 +816,17 @@ impl PhysicalRelExpr {
             | PhysicalRelExpr::Rename { tree_hash, .. } => {
                 *tree_hash = Some(hash_val);
                 Ok(())
-            } // Cannot reach this all are covered currently
-              // _ => Err(c_err("set_hash not implemented for expr enum type")),
+            }
         }
     }
 
     pub fn get_tree_hash(&self) -> Result<u64, CrustyError> {
         match self {
+            PhysicalRelExpr::Delete { .. } | PhysicalRelExpr::Update { .. } => Err(c_err(
+                "get_tree_hash not applicable to Delete/Update (always plan roots)",
+            )),
             PhysicalRelExpr::Scan { tree_hash, .. }
+            | PhysicalRelExpr::IndexScan { tree_hash, .. }
             | PhysicalRelExpr::Select { tree_hash, .. }
             | PhysicalRelExpr::CrossJoin { tree_hash, .. }
             | PhysicalRelExpr::NestedLoopJoin { tree_hash, .. }
@@ -925,10 +1030,10 @@ impl PhysicalRelExpr {
                 let res = input_hash ^ func_hash;
                 self.set_tree_hash(res)?;
                 Ok(res)
-            } // Commenting as all are covered
-              // _ => Err(c_err(
-              //     "tree contains operators for which hash isn't implemented",
-              // )),
+            }
+            _ => Err(c_err(
+                "tree contains operators for which hash isn't implemented",
+            )),
         }
     }
 

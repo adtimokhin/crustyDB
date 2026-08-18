@@ -529,7 +529,7 @@ fn get_opiterator_after_optimization_with_managers_and_catalog(
 
     let query = translator.process_query(&query).unwrap();
     let cost_model = CardinalityCostModel::new(managers.stats);
-    let optimizer = CascadesOptimizer::new(cost_model, managers);
+    let optimizer = CascadesOptimizer::new(cost_model, managers, catalog.clone());
     let optimized_physical_plan = optimizer.optimize(&query, None);
     println!(
         "Optimized physical plan\n{}",

@@ -13,15 +13,17 @@ use common::ids::{AtomicTimeStamp, StateMeta};
 use common::physical::col_id_generator::{ColIdGenerator, ColIdGeneratorRef};
 use common::physical_expr::physical_rel_expr::PhysicalRelExpr;
 use common::query::query_registrar::QueryStateRegistrar;
-use common::table::TableInfo;
+use common::table::{IndexInfo, TableInfo};
 use common::traits::stat_manager_trait::StatManagerTrait;
 use common::traits::state_tracker_trait::StateTrackerTrait;
 use common::{prelude::*, QUERY_CACHES_DIR_NAME};
 use common::{Attribute, QueryResult};
 use queryexe::query::get_attr;
+use queryexe::query::translate_and_validate::get_name;
 use queryexe::Managers;
 use sqlparser::ast::ColumnDef;
 use sqlparser::ast::TableConstraint;
+use sqlparser::ast::{Expr as SqlExpr, ObjectName, OrderByExpr};
 
 use crate::sql_parser::{ParserResponse, SQLParser};
 
@@ -219,6 +221,83 @@ impl DatabaseState {
         let qr = QueryResult::MessageOnly(format!("Table {} created", table_name));
 
         Ok(qr)
+    }
+
+    /// `CREATE [UNIQUE] INDEX [name] ON table_name (col1, col2, ...)`.
+    /// Builds the index by scanning every existing row in `table_name`.
+    pub fn create_index(
+        &self,
+        name: Option<&ObjectName>,
+        table_name: &ObjectName,
+        columns: &[OrderByExpr],
+        unique: bool,
+        if_not_exists: bool,
+    ) -> Result<QueryResult, CrustyError> {
+        let table_name = get_name(table_name)?;
+        let table_id = self
+            .catalog
+            .get_table_id_if_exists(&table_name)
+            .ok_or_else(|| CrustyError::CrustyError(format!("Table {} not found", table_name)))?;
+        let schema = self.catalog.get_table_schema(table_id).unwrap();
+
+        let mut col_names = Vec::new();
+        let mut raw_columns = Vec::new();
+        for order_by in columns {
+            let col_name = match &order_by.expr {
+                SqlExpr::Identifier(ident) => ident.value.clone(),
+                other => {
+                    return Err(CrustyError::CrustyError(format!(
+                        "Unsupported index column expression: {:?}",
+                        other
+                    )))
+                }
+            };
+            let idx = schema.get_field_index(&col_name).ok_or_else(|| {
+                CrustyError::CrustyError(format!("Column {} not found", col_name))
+            })?;
+            raw_columns.push(idx);
+            col_names.push(col_name);
+        }
+
+        let index_name = match name {
+            Some(n) => get_name(n)?,
+            None => format!("idx_{}_{}", table_name, col_names.join("_")),
+        };
+
+        if self.catalog.is_valid_index_name(&index_name) {
+            return if if_not_exists {
+                Ok(QueryResult::MessageOnly(format!(
+                    "Index {} already exists",
+                    index_name
+                )))
+            } else {
+                Err(CrustyError::CrustyError(format!(
+                    "Index {} already exists",
+                    index_name
+                )))
+            };
+        }
+
+        // Index ids share the same container-id namespace as tables.
+        let index_id = self.catalog.get_table_id(&index_name);
+        self.managers.im.create_index(
+            index_id,
+            table_id,
+            &raw_columns,
+            TransactionId::new(),
+        )?;
+        self.catalog.add_index(IndexInfo::new(
+            index_id,
+            index_name.clone(),
+            table_id,
+            raw_columns,
+            unique,
+        ));
+
+        Ok(QueryResult::MessageOnly(format!(
+            "Index {} created",
+            index_name
+        )))
     }
 
     pub fn reset(&self) -> Result<(), CrustyError> {

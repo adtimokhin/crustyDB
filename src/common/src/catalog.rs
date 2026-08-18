@@ -1,5 +1,5 @@
 use crate::ids::{ColumnId, ContainerId};
-use crate::table::TableInfo;
+use crate::table::{IndexInfo, TableInfo};
 use crate::{table::TableSchema, MAX_COLUMNS};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -75,6 +75,10 @@ impl ContainerIdGenerator {
 pub struct Catalog {
     container_id_generator: Mutex<ContainerIdGenerator>,
     tables: RwLock<HashMap<ContainerId, TableInfo>>,
+    /// Indexes, keyed by name. Index ids share the same container id
+    /// namespace as tables (see `ContainerId`'s doc comment), so a fresh
+    /// index id is minted with the same `get_table_id`-style generator.
+    indexes: RwLock<HashMap<String, IndexInfo>>,
 }
 
 impl Catalog {
@@ -82,6 +86,7 @@ impl Catalog {
         Arc::new(Catalog {
             container_id_generator: Mutex::new(ContainerIdGenerator::new()),
             tables: RwLock::new(HashMap::new()),
+            indexes: RwLock::new(HashMap::new()),
         })
     }
 
@@ -162,6 +167,32 @@ impl Catalog {
             .attributes()
             .enumerate()
             .map(|(i, attr)| (attr.name.clone(), get_temp_col_id(c_id, i)))
+            .collect()
+    }
+
+    /// Register a new index. Returns `None` (and registers nothing) if an
+    /// index with this name already exists.
+    pub fn add_index(&self, info: IndexInfo) -> Option<()> {
+        let mut indexes = self.indexes.write().unwrap();
+        if indexes.contains_key(&info.name) {
+            return None;
+        }
+        indexes.insert(info.name.clone(), info);
+        Some(())
+    }
+
+    pub fn is_valid_index_name(&self, name: &str) -> bool {
+        self.indexes.read().unwrap().contains_key(name)
+    }
+
+    /// Every index defined on `table_id`, in no particular order.
+    pub fn get_indexes_for_table(&self, table_id: ContainerId) -> Vec<IndexInfo> {
+        self.indexes
+            .read()
+            .unwrap()
+            .values()
+            .filter(|info| info.table_id == table_id)
+            .cloned()
             .collect()
     }
 }

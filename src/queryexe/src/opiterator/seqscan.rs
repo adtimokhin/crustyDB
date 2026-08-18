@@ -111,7 +111,14 @@ impl OpIterator for SeqScan {
                     let t = expr.eval(&tuple);
                     new_field_vals.push(t);
                 }
-                return Ok(Some(Tuple::new(new_field_vals)));
+                let mut new_tuple = Tuple::new(new_field_vals);
+                // The planner's `Scan` node always projects (even when it's
+                // just re-listing every column, see planner.rs), so without
+                // this, `value_id` would be silently dropped here and never
+                // reach operators further up the tree that need it (Update,
+                // Delete, or anything reading `tuple.value_id`).
+                new_tuple.value_id = tuple.value_id;
+                return Ok(Some(new_tuple));
             } else {
                 return Ok(Some(tuple));
             }

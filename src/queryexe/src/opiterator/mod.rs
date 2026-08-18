@@ -1,7 +1,9 @@
 pub use self::aggregate::Aggregate;
 pub use self::cross_join::CrossJoin;
+pub use self::delete::Delete;
 pub use self::filter::Filter;
 pub use self::hash_join::HashEqJoin;
+pub use self::index_scan::IndexScan;
 pub use self::nested_loop_join::NestedLoopJoin;
 pub use self::project::Project;
 pub use self::seqscan::SeqScan;
@@ -13,8 +15,10 @@ use common::{CrustyError, TableSchema, Tuple};
 
 mod aggregate;
 mod cross_join;
+mod delete;
 mod filter;
 mod hash_join;
+mod index_scan;
 mod nested_loop_join;
 mod project;
 mod seqscan;
