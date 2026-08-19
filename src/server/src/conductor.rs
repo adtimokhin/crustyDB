@@ -10,6 +10,7 @@ use common::error::c_err;
 use common::ids::TransactionId;
 use common::util::data_reader::CsvReader;
 
+use common::catalog::CatalogRef;
 use common::physical_expr::physical_rel_expr::PhysicalRelExpr;
 use common::query::rules::Rules;
 use common::{CrustyError, QueryResult};
@@ -26,12 +27,15 @@ use txn_manager::transactions::Transaction;
 #[allow(unused_imports)]
 use optimizer::cost::dummy_cost_model::{DummyCost, DummyCostModel};
 #[allow(unused_imports)]
+use optimizer::cost::cardinality_cost_model::CardinalityCostModel;
+#[allow(unused_imports)]
 use optimizer::mock_optimizer::MockOptimizer;
+use optimizer::cascades_optimizer::CascadesOptimizer;
 
-//TODO milestone op
-type ConductorCostModel = DummyCostModel;
-//type Optimizer = CascadesOptimizer<ConductorCostModel>;
-type Optimizer = MockOptimizer<ConductorCostModel>;
+// A real, statistics-driven cost model (see optimizer::cost::cardinality_cost_model)
+// now drives the live query engine instead of DummyCostModel's constant-zero cost.
+type ConductorCostModel = CardinalityCostModel;
+type Optimizer = CascadesOptimizer<ConductorCostModel>;
 
 /// Conductor runs query to the database
 pub struct Conductor {
@@ -42,9 +46,9 @@ pub struct Conductor {
 }
 
 impl Conductor {
-    pub fn new(managers: &'static Managers) -> Result<Self, CrustyError> {
+    pub fn new(managers: &'static Managers, catalog: CatalogRef) -> Result<Self, CrustyError> {
         let parser = SQLParser::new();
-        let optimizer = Optimizer::new(ConductorCostModel::new(managers.stats), managers);
+        let optimizer = Optimizer::new(ConductorCostModel::new(managers.stats), managers, catalog);
         let executor = Executor::new_ref(managers);
         let conductor = Conductor {
             parser,
@@ -59,9 +63,10 @@ impl Conductor {
     pub fn new_from_tid(
         managers: &'static Managers,
         tid: TransactionId,
+        catalog: CatalogRef,
     ) -> Result<Self, CrustyError> {
         let parser = SQLParser::new();
-        let optimizer = Optimizer::new(ConductorCostModel::new(managers.stats), managers);
+        let optimizer = Optimizer::new(ConductorCostModel::new(managers.stats), managers, catalog);
         let executor = Executor::new_ref(managers);
         let conductor = Conductor {
             parser,
@@ -223,12 +228,14 @@ impl Conductor {
                         let table_name = get_name(table_name)?;
                         let table_id = db_state.catalog.get_table_id(&table_name);
                         let table_schema = db_state.catalog.get_table_schema(table_id).unwrap();
+                        let indexes = db_state.catalog.get_indexes_for_table(table_id);
                         let count = self.executor.import_tuples(
                             values,
                             &table_name,
                             &table_id,
                             &table_schema,
                             self.active_txn.tid()?,
+                            &indexes,
                         )?;
                         let qr = QueryResult::new_insert_result(count, table_name);
                         Ok(qr)
@@ -245,6 +252,67 @@ impl Conductor {
                     }
                 }
             }
+            Statement::CreateIndex {
+                name,
+                table_name,
+                columns,
+                unique,
+                if_not_exists,
+                ..
+            } => {
+                debug!("Processing CREATE INDEX on table: {:?}", table_name);
+                db_state.create_index(name.as_ref(), table_name, columns, *unique, *if_not_exists)
+            }
+            Statement::Delete {
+                from, selection, ..
+            } => {
+                debug!("Processing DELETE from: {:?}", from);
+                let enabled_rules = Arc::new(Rules::default());
+                let lp = Translator::from_delete(
+                    from,
+                    selection,
+                    &db_state.catalog,
+                    &enabled_rules,
+                    &db_state.col_id_gen,
+                )
+                .map_err(|e| c_err(&format!("{}", e)))?;
+                let pp = self
+                    .optimizer
+                    .optimize(&lp, Some(&db_state.query_registrar));
+                let result = self.run_physical_plan(pp, db_state)?;
+                let count = result.get_tuples().map(|t| t.len()).unwrap_or(0);
+                Ok(QueryResult::new_message_only_result(format!(
+                    "Deleted {} row(s)",
+                    count
+                )))
+            }
+            Statement::Update {
+                table,
+                assignments,
+                selection,
+                ..
+            } => {
+                debug!("Processing UPDATE table: {:?}", table);
+                let enabled_rules = Arc::new(Rules::default());
+                let lp = Translator::from_update(
+                    table,
+                    assignments,
+                    selection,
+                    &db_state.catalog,
+                    &enabled_rules,
+                    &db_state.col_id_gen,
+                )
+                .map_err(|e| c_err(&format!("{}", e)))?;
+                let pp = self
+                    .optimizer
+                    .optimize(&lp, Some(&db_state.query_registrar));
+                let result = self.run_physical_plan(pp, db_state)?;
+                let count = result.get_tuples().map(|t| t.len()).unwrap_or(0);
+                Ok(QueryResult::new_message_only_result(format!(
+                    "Updated {} row(s)",
+                    count
+                )))
+            }
             _ => {
                 unimplemented!()
             }
@@ -259,11 +327,12 @@ impl Conductor {
     ) -> Result<QueryResult, CrustyError> {
         let table_id = db_state.catalog.get_table_id(table_name);
         let table_schema = db_state.catalog.get_table_schema(table_id).unwrap();
+        let indexes = db_state.catalog.get_indexes_for_table(table_id);
         let file = OpenOptions::new().read(true).open(file_path).unwrap();
         let mut csv_reader = CsvReader::new(file, &table_schema, b',', false).unwrap();
         let num_inserts = self
             .executor
-            .import_records_from_reader(&mut csv_reader, &table_id, self.active_txn.tid()?)
+            .import_records_from_reader(&mut csv_reader, &table_id, self.active_txn.tid()?, &indexes)
             .unwrap();
         Ok(QueryResult::new_insert_result(
             num_inserts,

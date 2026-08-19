@@ -3,6 +3,7 @@ use crate::Managers;
 use common::{
     datatypes::{default_decimal_precision, default_decimal_scale},
     prelude::*,
+    table::IndexInfo,
     traits::storage_trait::StorageTrait,
     traits::{stat_manager_trait::StatManagerTrait, state_tracker_trait::StateTrackerTrait},
     tuple::ConvertedResult,
@@ -10,22 +11,34 @@ use common::{
 };
 use sqlparser::ast::{Value, Values};
 
+fn extract_key(tuple: &Tuple, columns: &[usize]) -> Vec<Field> {
+    columns
+        .iter()
+        .map(|&i| tuple.get_field(i).expect("index column out of range").clone())
+        .collect()
+}
+
 pub(crate) fn insert_validated_tuples(
     table_id: ContainerId,
     tuples: &Vec<Tuple>,
     txn_id: TransactionId,
     managers: &'static Managers,
+    indexes: &[IndexInfo],
 ) -> Result<usize, CrustyError> {
     let mut tuples_bytes = Vec::new();
     for t in tuples {
         tuples_bytes.push(t.to_bytes());
     }
     let inserted = managers.sm.insert_values(table_id, tuples_bytes, txn_id);
-    info!("TODO call tm and im for insert_values");
+    info!("TODO call tm for insert_values");
     let insert_count = inserted.len();
     if insert_count == tuples.len() {
         for (t, v) in tuples.iter().zip(inserted.iter()) {
             managers.stats.new_record(t, *v)?;
+            for index in indexes {
+                let key = extract_key(t, &index.columns);
+                managers.im.insert_entry(index.index_id, key, *v)?;
+            }
         }
         managers.stats.set_ts(table_id, txn_id.id());
         Ok(insert_count)

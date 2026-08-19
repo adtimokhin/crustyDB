@@ -340,7 +340,7 @@ impl QueryEngine {
         let database_state =
             Box::new(DatabaseState::create_db(base_dir, "db_name", managers).unwrap());
         let database_state: &'static DatabaseState = Box::leak(database_state);
-        let conductor = Conductor::new(managers).unwrap();
+        let conductor = Conductor::new(managers, database_state.catalog.clone()).unwrap();
         QueryEngine {
             base_dir_path_name: base_dir.to_path_buf(),
             database_state,
@@ -418,11 +418,13 @@ impl QueryEngine {
             .catalog
             .get_table_schema(table_id)
             .unwrap();
+        let indexes = self.database_state.catalog.get_indexes_for_table(table_id);
         let mut csv_reader = CsvReader::new(reader, &table_schema, delimiter, has_header)?;
         self.conductor.executor.import_records_from_reader(
             &mut csv_reader as &mut dyn DataReader,
             &table_id,
             TransactionId::new(),
+            &indexes,
         )
     }
 }

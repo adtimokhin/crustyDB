@@ -65,6 +65,7 @@ impl Executor {
         table_id: &ContainerId,
         table_schema: &TableSchema,
         txn_id: TransactionId,
+        indexes: &[common::table::IndexInfo],
     ) -> Result<usize, CrustyError> {
         let converted_result = mutator::convert_insert_vals(values)?; // This returns Vec<u8>
         let validated_converted_result =
@@ -82,6 +83,7 @@ impl Executor {
             &validated_converted_result.converted,
             txn_id,
             self.managers,
+            indexes,
         )?;
 
         Ok(insert_count)
@@ -99,6 +101,7 @@ impl Executor {
         rdr: &mut dyn DataReader,
         table_id: &ContainerId,
         txn_id: TransactionId,
+        indexes: &[common::table::IndexInfo],
     ) -> Result<usize, CrustyError> {
         // TODO: Magic number
         let max_records_in_mem = 100000;
@@ -140,6 +143,7 @@ impl Executor {
                     &result_set.converted,
                     txn_id,
                     self.managers,
+                    indexes,
                 )?;
                 total_insert_count += insert_count;
             }
@@ -194,6 +198,7 @@ mod test {
             &mut csv_reader as &mut dyn DataReader,
             &c_id,
             TransactionId::new(),
+            &[],
         )
         .unwrap();
 

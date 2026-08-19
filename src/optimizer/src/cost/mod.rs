@@ -10,6 +10,7 @@ use queryexe::query::translate_and_validate::Query;
 //TODO milestone qo
 use DummyMemoNode as MemoNodeRefWrapper;
 
+pub mod cardinality_cost_model;
 pub mod dummy_cost_model;
 
 pub trait Cost: Default + Clone + PartialEq + PartialOrd + Debug + Add<Output = Self> {}

@@ -66,6 +66,46 @@ pub fn get_attr(dtype: &ast::DataType) -> Result<DataType, CrustyError> {
     }
 }
 
+/// Find the `cid` of the `Scan` at the bottom of `plan`, if `plan` is (a
+/// `Rename` wrapping) a single bare table scan. `None` for anything else
+/// (joins, subqueries, ...) — those aren't eligible for the index rewrite.
+fn find_scan_cid(plan: &LogicalRelExpr) -> Option<common::ids::ContainerId> {
+    match plan {
+        LogicalRelExpr::Scan { cid, .. } => Some(*cid),
+        LogicalRelExpr::Rename { src, .. } => find_scan_cid(src),
+        _ => None,
+    }
+}
+
+/// Replace the `Scan` at the bottom of `plan` with an `IndexScan`, preserving
+/// any `Rename` wrapper (and thus the same external column-id contract) so
+/// everything built on top of `plan` (Project, further Renames, ...) is
+/// unaffected by the substitution.
+fn replace_scan_with_index(
+    plan: LogicalRelExpr,
+    index_id: common::ids::ContainerId,
+    key_values: Vec<Expression<LogicalRelExpr>>,
+) -> LogicalRelExpr {
+    match plan {
+        LogicalRelExpr::Scan {
+            cid,
+            table_name,
+            column_names,
+        } => LogicalRelExpr::IndexScan {
+            cid,
+            table_name,
+            column_names,
+            index_id,
+            key_values,
+        },
+        LogicalRelExpr::Rename { src, src_to_dest } => LogicalRelExpr::Rename {
+            src: Box::new(replace_scan_with_index(*src, index_id, key_values)),
+            src_to_dest,
+        },
+        other => other,
+    }
+}
+
 pub type EnvironmentRef = Arc<Environment>;
 
 #[derive(Debug, Clone)]
@@ -300,6 +340,96 @@ impl Translator {
         translator.process_query(sql)
     }
 
+    /// Translate `DELETE FROM <table> [WHERE ...]`. Only a single table with
+    /// no joins is supported.
+    pub fn from_delete(
+        from: &[sqlparser::ast::TableWithJoins],
+        selection: &Option<sqlparser::ast::Expr>,
+        catalog: &CatalogRef,
+        enabled_rules: &RulesRef,
+        col_id_gen: &ColIdGeneratorRef,
+    ) -> Result<Query, TranslatorError> {
+        if from.len() != 1 || !from[0].joins.is_empty() {
+            return Err(translation_err!(
+                UnsupportedSQL,
+                "DELETE only supports a single table with no joins"
+            ));
+        }
+        let mut translator = Translator::new(catalog, enabled_rules, col_id_gen);
+        let (scan_plan, _is_subquery) = translator.process_table_factor(&from[0].relation)?;
+        let table_id = find_scan_cid(&scan_plan)
+            .ok_or_else(|| translation_err!(UnsupportedSQL, "DELETE target must be a plain table"))?;
+        let filtered = translator.process_where(scan_plan, selection)?;
+        Ok(Query {
+            env: translator.env.clone(),
+            plan: LogicalRelExpr::Delete {
+                table_id,
+                src: Box::new(filtered),
+            },
+        })
+    }
+
+    /// Translate `UPDATE <table> SET col = literal, ... [WHERE ...]`. Only a
+    /// single table with no joins, and literal-valued assignments, are
+    /// supported (matches `TupleAssignments`, which the `Update` operator
+    /// applies directly with no further expression evaluation).
+    pub fn from_update(
+        table: &sqlparser::ast::TableWithJoins,
+        assignments: &[sqlparser::ast::Assignment],
+        selection: &Option<sqlparser::ast::Expr>,
+        catalog: &CatalogRef,
+        enabled_rules: &RulesRef,
+        col_id_gen: &ColIdGeneratorRef,
+    ) -> Result<Query, TranslatorError> {
+        if !table.joins.is_empty() {
+            return Err(translation_err!(
+                UnsupportedSQL,
+                "UPDATE only supports a single table with no joins"
+            ));
+        }
+        let mut translator = Translator::new(catalog, enabled_rules, col_id_gen);
+        let (scan_plan, _is_subquery) = translator.process_table_factor(&table.relation)?;
+        let table_id = find_scan_cid(&scan_plan)
+            .ok_or_else(|| translation_err!(UnsupportedSQL, "UPDATE target must be a plain table"))?;
+        let schema = catalog
+            .get_table_schema(table_id)
+            .ok_or_else(|| translation_err!(TableNotFound, "table {} not found", table_id))?;
+
+        let mut tuple_assignments = Vec::new();
+        for assignment in assignments {
+            if assignment.id.len() != 1 {
+                return Err(translation_err!(
+                    UnsupportedSQL,
+                    "Only simple column assignments (col = value) are supported"
+                ));
+            }
+            let col_name = &assignment.id[0].value;
+            let field_idx = schema
+                .get_field_index(col_name)
+                .ok_or_else(|| translation_err!(ColumnNotFound, "{}", col_name))?;
+            let value = match translator.process_expr(&assignment.value, None)? {
+                Expression::Field { val } => val,
+                _ => {
+                    return Err(translation_err!(
+                        UnsupportedSQL,
+                        "SET clause must assign a literal value"
+                    ))
+                }
+            };
+            tuple_assignments.push((field_idx, value));
+        }
+
+        let filtered = translator.process_where(scan_plan, selection)?;
+        Ok(Query {
+            env: translator.env.clone(),
+            plan: LogicalRelExpr::Update {
+                table_id,
+                src: Box::new(filtered),
+                assignments: tuple_assignments,
+            },
+        })
+    }
+
     pub fn process_query(
         &mut self,
         query: &sqlparser::ast::Query,
@@ -528,6 +658,74 @@ impl Translator {
         }
     }
 
+    /// If `plan` is a plain table scan and some index on that table has an
+    /// equality predicate in `conjuncts` for every one of its columns,
+    /// rewrite `plan` to use that index instead of a full scan. Returns the
+    /// (possibly rewritten) plan and the predicates that still need to be
+    /// applied as a residual `Select` (empty if the index fully covers the
+    /// WHERE clause). A no-op (returns the inputs unchanged) if no table
+    /// scan is found or no index matches.
+    fn try_index_rewrite(
+        &self,
+        plan: LogicalRelExpr,
+        conjuncts: Vec<Expression<LogicalRelExpr>>,
+    ) -> (LogicalRelExpr, Vec<Expression<LogicalRelExpr>>) {
+        let scan_cid = match find_scan_cid(&plan) {
+            Some(cid) => cid,
+            None => return (plan, conjuncts),
+        };
+
+        // Resolve every `col = literal` conjunct to the table's raw (0-based)
+        // column offset it constrains, regardless of column-id renaming.
+        let mut resolved: HashMap<ColumnId, (Field, usize)> = HashMap::new();
+        for (i, conj) in conjuncts.iter().enumerate() {
+            if let Expression::Binary {
+                op: BinaryOp::Eq,
+                left,
+                right,
+            } = conj
+            {
+                let pair = match (left.as_ref(), right.as_ref()) {
+                    (Expression::ColRef { id }, Expression::Field { val }) => Some((*id, val.clone())),
+                    (Expression::Field { val }, Expression::ColRef { id }) => Some((*id, val.clone())),
+                    _ => None,
+                };
+                if let Some((col_id, val)) = pair {
+                    let origin = self.env.get_origin(&OriginExpression::DerivedColRef { col_id });
+                    if let OriginExpression::BaseCidAndIndex { cid, index } = origin {
+                        if cid == scan_cid {
+                            resolved.insert(index, (val, i));
+                        }
+                    }
+                }
+            }
+        }
+        if resolved.is_empty() {
+            return (plan, conjuncts);
+        }
+
+        for info in self.catalog_ref.get_indexes_for_table(scan_cid) {
+            if info.columns.iter().all(|c| resolved.contains_key(c)) {
+                let mut used = std::collections::HashSet::new();
+                let mut key_values = Vec::new();
+                for col in &info.columns {
+                    let (val, conj_idx) = resolved.get(col).unwrap();
+                    key_values.push(Expression::Field { val: val.clone() });
+                    used.insert(*conj_idx);
+                }
+                let residual: Vec<Expression<LogicalRelExpr>> = conjuncts
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !used.contains(i))
+                    .map(|(_, e)| e.clone())
+                    .collect();
+                let new_plan = replace_scan_with_index(plan, info.index_id, key_values);
+                return (new_plan, residual);
+            }
+        }
+        (plan, conjuncts)
+    }
+
     fn process_where(
         &mut self,
         plan: LogicalRelExpr,
@@ -559,12 +757,11 @@ impl Translator {
                                 vec![Expression::col_ref(col_id)],
                             ))
                         }
-                        _ => Ok(plan.select(
-                            true,
-                            &self.enabled_rules,
-                            &self.col_id_gen,
-                            vec![expr],
-                        )),
+                        _ => {
+                            let conjuncts = expr.split_conjunction();
+                            let (new_plan, residual) = self.try_index_rewrite(plan, conjuncts);
+                            Ok(new_plan.select(true, &self.enabled_rules, &self.col_id_gen, residual))
+                        }
                     }
                 }
                 Err(TranslatorError::ColumnNotFound(_)) => {

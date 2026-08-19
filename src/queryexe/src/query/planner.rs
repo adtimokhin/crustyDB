@@ -1,6 +1,7 @@
 use crate::{
     opiterator::{
-        Aggregate, CrossJoin, Filter, HashEqJoin, NestedLoopJoin, OpIterator, Project, SeqScan,
+        Aggregate, CrossJoin, Delete, Filter, HashEqJoin, IndexScan, NestedLoopJoin, OpIterator,
+        Project, SeqScan, Update,
     },
     Managers,
 };
@@ -199,6 +200,70 @@ fn physical_plan_to_op_iterator_helper(
 
             let scan_iter = SeqScan::new(managers, &out_schema, cid, tid, None, Some(fields));
             (Ok(Box::new(scan_iter)), col_id_to_idx)
+        }
+
+        PhysicalRelExpr::IndexScan {
+            cid,
+            table_name: _,
+            column_names,
+            index_id,
+            key_values,
+            ..
+        } => {
+            let in_schema = catalog.get_table_schema(*cid).unwrap();
+
+            let mut out_schema_att = Vec::new();
+            for name in column_names {
+                let name = get_column_index_from_temp_col_id(*name);
+                out_schema_att.push(in_schema.get_attribute(name).unwrap().clone());
+            }
+            let out_schema = TableSchema::new(out_schema_att);
+
+            let col_id_to_idx = column_names
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (*id, i as ColumnId))
+                .collect::<HashMap<ColumnId, ColumnId>>();
+
+            // The translator only ever builds `IndexScan` with literal-valued
+            // key expressions (see `Translator::process_where`'s index rule).
+            let key = key_values
+                .iter()
+                .map(|e| match e {
+                    Expression::Field { val } => val.clone(),
+                    _ => panic!("IndexScan key expression must be a literal"),
+                })
+                .collect::<Vec<_>>();
+
+            let scan_iter = IndexScan::new(managers, &out_schema, *index_id, tid, key);
+            (Ok(Box::new(scan_iter)), col_id_to_idx)
+        }
+
+        PhysicalRelExpr::Delete { table_id, src } => {
+            let (src_iter, _) =
+                physical_plan_to_op_iterator_helper(managers, catalog, src, tid, _timestamp);
+            let indexes = catalog.get_indexes_for_table(*table_id);
+            let delete_iter = Delete::new(managers, tid, indexes, src_iter.unwrap());
+            (Ok(Box::new(delete_iter)), HashMap::new())
+        }
+
+        PhysicalRelExpr::Update {
+            table_id,
+            src,
+            assignments,
+        } => {
+            let (src_iter, _) =
+                physical_plan_to_op_iterator_helper(managers, catalog, src, tid, _timestamp);
+            let indexes = catalog.get_indexes_for_table(*table_id);
+            let update_iter = Update::new(
+                managers,
+                table_id,
+                tid,
+                assignments.clone(),
+                indexes,
+                src_iter.unwrap(),
+            );
+            (Ok(Box::new(update_iter)), HashMap::new())
         }
 
         PhysicalRelExpr::Project { src, cols, .. } => {

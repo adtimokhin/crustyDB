@@ -1,4 +1,4 @@
-use crate::{attribute::Attribute, ids::ContainerId};
+use crate::{attribute::Attribute, ids::ColumnId, ids::ContainerId};
 use crate::{Constraint, DataType};
 use serde::de::{Deserialize, Deserializer};
 use serde::ser::{Serialize, Serializer};
@@ -16,6 +16,39 @@ pub struct TableInfo {
 impl TableInfo {
     pub fn new(c_id: ContainerId, name: String, schema: TableSchema) -> Self {
         TableInfo { c_id, name, schema }
+    }
+}
+
+/// Catalog-level metadata for a B+Tree index (primary or secondary).
+/// The live B+Tree pages themselves are owned by `index::IndexManager`,
+/// keyed by `index_id` (which is also the index's storage container id).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct IndexInfo {
+    pub index_id: ContainerId,
+    pub name: String,
+    pub table_id: ContainerId,
+    /// The raw (0-based, within-table) column indices that make up the index
+    /// key, in key order. A single-column index has one entry; a composite
+    /// index has more than one.
+    pub columns: Vec<ColumnId>,
+    pub unique: bool,
+}
+
+impl IndexInfo {
+    pub fn new(
+        index_id: ContainerId,
+        name: String,
+        table_id: ContainerId,
+        columns: Vec<ColumnId>,
+        unique: bool,
+    ) -> Self {
+        IndexInfo {
+            index_id,
+            name,
+            table_id,
+            columns,
+            unique,
+        }
     }
 }
 

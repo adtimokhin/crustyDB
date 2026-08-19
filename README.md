@@ -1,79 +1,75 @@
 # CrustyDB
 
-CrustyDB is an academic Rust-based relational database management system built by ChiData at The University of Chicago.
+CrustyDB is a relational database management system built from scratch in Rust: a slotted-page storage engine with a disk-backed buffer pool, a B+Tree indexing engine, Volcano-model query execution, and a real cost-based query optimizer.
+
+## Features
+
+- **Storage**: a slotted-page format (fixed-size 4KB pages storing variable-length records) built on top of a buffer pool that reads and writes pages to disk via `pread`/`pwrite`, with page-level latching for concurrent access.
+- **Indexing**: a B+Tree engine (`src/index`) built on the same slotted-page infrastructure, supporting single-column and composite keys, non-unique (secondary) indexes with duplicate keys, and `CREATE INDEX`. Index entries are maintained automatically on `INSERT`, `UPDATE`, and `DELETE`.
+- **Query execution**: a Volcano-style (iterator/pull-based) execution engine with sequential scan, index scan, filter, project, nested-loop join, hash join, sort-merge join, hash-based group-by/aggregate, sort, update, and delete operators.
+- **Query optimization**: a cost-based optimizer (`CascadesOptimizer`) that builds a memo of candidate physical plans and picks the cheapest using real cardinality/selectivity statistics (`ReservoirStatManager`) instead of fixed heuristics — for example, choosing between an index scan and a full scan based on estimated selectivity, and between a hash join and a nested-loop join based on estimated input sizes.
+- **SQL surface**: `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `SELECT` (with `WHERE`, joins, `GROUP BY`/aggregates), `UPDATE`, and `DELETE`, via a client/server architecture with a `psql`-like CLI client.
 
 ## Usage
 
-Make sure you have Rust > 1.81.0. Updating the rust toolkit is pretty easy, just do:
+Make sure you have Rust > 1.81.0. Updating the Rust toolchain is easy:
 
 ```bash
 $ rustup update
 ```
 
-You can then check the version by doing:
+You can then check the version:
 
 ```bash
 $ rustc --version
 ```
 
-### CSIL / vdesk etc.
-By default the cargo/rust version on cs.linux or vdesk is out of date. However, techstaff has set up a way
-for you to use 1.81+. You must run the following command on login.
+## Building the project
 
-```
-$ module load rust
-```
+To build the entire CrustyDB source code, run `cargo build`.
 
-You can verify this worked with
-```
-$ rustc --version
-rustc 1.82.0
-$ cargo --version
-cargo 1.82.0
-```
-
-## Building project
-To build the entire CrustyDB source code, you would run `cargo build`
-
-CrustyDB is set up as a workspace and various modules/components of the database are broken into separate packages/crates. To build a specific crate (for example common), you would use the following command `cargo build -p common`. Note if a package/crate depends on another crate (e.g. heapstore depends on common and txn_manager) those crates will be built as part of the process. **Note that for the first milestone you will only have access to common and limited part of heapstore.**
-
+CrustyDB is set up as a workspace, with various modules/components broken out into separate packages/crates. To build a specific crate (for example `common`), use `cargo build -p common`. If a crate depends on another (e.g. `heapstore` depends on `common` and `txn_manager`), those crates will be built as part of the process.
 
 These crates are:
-- `cli-crusty` : a command line interface client binary application that can connect and issue commands/queries to a running CrustyDB server.
-- `common` : shared data structures or logical components needed by everything in CrustyDB. this includes things like tables, errors, logical query plans, ids, some test utilities, etc. This is organized into modules that split out definitions related to the physical layout, shared query execution operations and representations, traits (interfaces), and utilities. Common metadata, structs, typedefs, enums, and errors are all located in the `base' module. 
-- `index`:  for managing indexes. This is a work in progress and not fully implemented. 
-- `optimizer` : a crate for query optimization.
-- `queryexe` : responsible for executing queries. This contains the operator implementations as well as the execution code for a volcano style execution engine.
-- `server` : the binary crate for running a CrustyDB server. This connects all modules (outside a client) together.
-- `storage`: the storage managers for the database. This includes multiple implementations and a buffer pool. Only one storage manager can be defined/used at a time The two main storage managers used in the project are:
-  - `heapstore` : a storage manager for storing data in heap files. milestone `hs` is exclusively in this crate.
-  - `memstore` : a poorly written storage manager that keeps everything in memory. it will persist data to files using serde on shutdown, and use these files to recreate the database state at shutdown
-- `txn_manager` : a near empty crate for an optional milestone to implement transactions. the use a `transaction` is embedded in many other crates, but can be safely ignored for the given milestones. There is also the use of a logical timestamp throughout many components. You can safely ignore this.
-- `utilities` : utilities for performance benchmarks that will be used by an optional milestone
+- `cli-crusty`: a command line interface client binary application that can connect and issue commands/queries to a running CrustyDB server.
+- `common`: shared data structures and logical components needed by everything in CrustyDB — tables, errors, logical/physical query plans, ids, test utilities, etc. Organized into modules split by physical layout, shared query execution operations and representations, traits (interfaces), and utilities.
+- `index`: the B+Tree indexing engine, plus the `IndexManager` that owns live indexes and maintains them on writes.
+- `optimizer`: query optimization — a memo-based, cost-driven optimizer (`CascadesOptimizer`) and a statistics-backed cost model (`CardinalityCostModel`), alongside a simpler structural fallback (`MockOptimizer`) used for tests.
+- `queryexe`: responsible for executing queries. Contains the operator implementations as well as the execution code for the Volcano-style execution engine.
+- `server`: the binary crate for running a CrustyDB server. Connects all modules (outside the client) together.
+- `storage`: the storage managers for the database, including a buffer pool. Only one storage manager is used at a time:
+  - `heapstore`: the primary storage manager, storing data in slotted-page heap files.
+  - `memstore`: a simpler storage manager that keeps everything in memory, persisting to files via serde on shutdown and reloading them on startup.
+- `txn_manager`: transaction management. Currently a no-op stub — no isolation/locking is implemented yet (a natural next milestone for this project).
+- `utilities`: shared utilities used by performance benchmarks.
 
-There are two other projects outside of crustydb workspace that we will use later `e2e-benchmarks` and `e2e-tests`. These are used for end-to-end testing (eg sending SQL to the server and getting a response).
+There's also an `e2e-tests` crate outside the main workspace, used for end-to-end testing (e.g. sending SQL to the server and checking the response) and for `criterion` benchmarks over the full stack.
 
 ## Tests
 
-Most crates have tests that can be run using cargo `cargo test`. Like building you can run tests for a single crate `cargo test -p common`. Note that tests will build/compile code in the tests modules, so you may encounter build errors here that do not show up in a regular build.
-
+Most crates have tests that can be run using `cargo test`. Like building, you can run tests for a single crate with `cargo test -p common`. Note that tests build/compile code in the tests modules, so you may encounter build errors here that don't show up in a regular build.
 
 ### Running an ignored test
+
 Some longer tests are set to be ignored by default. To run them: `cargo test -- --ignored`
+
+### Benchmarks
+
+`e2e-tests` includes `criterion` benchmarks (`cargo bench` from that directory) covering storage manager throughput, page-level operations, filters, joins, and index scans.
 
 ## Logging
 
-CrustyDB uses the [env_logger](https://docs.rs/env_logger/0.8.2/env_logger/) crate for logging messages. Per the docs on the log crate:
+CrustyDB uses the [env_logger](https://docs.rs/env_logger/0.8.2/env_logger/) crate for logging messages. Per the docs on the `log` crate:
 ```
-The basic use of the log crate is through the five logging macros: error!, warn!, info!, debug! and trace! 
-where error! represents the highest-priority log messages and trace! the lowest. 
-The log messages are filtered by configuring the log level to exclude messages with a lower priority. 
+The basic use of the log crate is through the five logging macros: error!, warn!, info!, debug! and trace!
+where error! represents the highest-priority log messages and trace! the lowest.
+The log messages are filtered by configuring the log level to exclude messages with a lower priority.
 Each of these macros accept format strings similarly to println!.
 ```
 
-The logging level is set by an environmental variable, `RUST_LOG`. The easiest way to set the level is when running a cargo command you set the logging level in the same command. EG : `RUST_LOG=debug cargo run --bin server`. However, when running unit tests the logging/output is suppressed and the logger is not initialized. So if you want to use logging for a test you must:
-- Make sure the test in question calls `init()` which is defined in `common::testutils` that initializes the logger. It can safely be called multiple times.
-- Tell cargo to not capture the output. For example, setting the level to DEBUG: `RUST_LOG=debug cargo test -- --nocapture [opt_test_name]`  **note the -- before --nocapture**
+The logging level is set by an environment variable, `RUST_LOG`. The easiest way to set the level is to set it in the same command you're running. E.g.: `RUST_LOG=debug cargo run --bin server`. When running unit tests, logging output is suppressed and the logger isn't initialized by default, so to see logging in a test:
+- Make sure the test calls `init()` (defined in `common::testutils`), which initializes the logger. It's safe to call multiple times.
+- Tell cargo not to capture output. For example, at DEBUG level: `RUST_LOG=debug cargo test -- --nocapture [opt_test_name]` (note the `--` before `--nocapture`).
 
 Examples:
 ```
@@ -82,54 +78,47 @@ RUST_LOG=debug cargo test
 RUST_LOG=debug cargo test -- --nocapture [test_name]
 ```
 
-In addition, the log level can also be controlled programmatically. The log
-level is set in the first line of the main() function in the server crate. By
-default, this is set to DEBUG. Feel free to change this as you see fit.
+The log level can also be set programmatically, in the first line of `main()` in the server crate (defaults to DEBUG).
 
 ### Connecting to a Database
 
 This is the basic process for starting a database and connecting to it via the CLI client.
 
-1. Start a server thread
+1. Start a server:
 
     ```
     $ cargo run --bin server
     ```
 
-2. Start a client with logging enabled to see output (this is in client.sh)
+2. Start a client with logging enabled to see output:
 
     ```
     $ RUST_LOG=info cargo run --bin cli-crusty
     ```
 
-For convenience we have provided some shell scripts to run the server and client. The server has a debug and info mode for the logger.
+### Client Commands
 
-### Client Command
-
-CrustyDB emulates psql commands.
+CrustyDB emulates `psql` commands.
 
 Command | Functionality
 ---------|--------------
-`\r [DATABABSE]` | cReates a new database, DATABASE
+`\r [DATABASE]` | Creates a new database, DATABASE
 `\c [DATABASE]` | Connects to DATABASE
-`\i [PATH] [TABLE_NAME]` | Imports a csv file at PATH and saves it to TABLE_NAME in 
-whatever database the client is currently connected to.
+`\i [PATH] [TABLE_NAME]` | Imports a CSV file at PATH and saves it to TABLE_NAME in whatever database the client is currently connected to.
 `\l` | List the name of all databases present on the server.
 `\dt` | List the name of all tables present on the current database.
 `\generate [CSV_NAME] [NUMBER_OF_RECORDS]` | Generate a test CSV for a sample schema.
-`\reset` | Calls the reset command. This should delete all data and state for all databases on the server
-`\close` | Closes the current client, but leaves the database server running
-`\shutdown` |  Shuts down the database server cleanly (allows the DB to gracefully exit)
+`\reset` | Deletes all data and state for all databases on the server.
+`\close` | Closes the current client, but leaves the database server running.
+`\shutdown` | Shuts down the database server cleanly (allows the DB to gracefully exit).
 
-There are other commands you can ignore for this class (register, runFull, runPartial, convert).
-
-The client also handles basic SQL queries.
+The client also handles SQL queries and statements directly.
 
 ## End to End Example
 
 After compiling the database, start a server and a client instance.
 
-To start the crustydb server:
+To start the CrustyDB server:
 
 ```
 $ cargo run --bin server
@@ -141,133 +130,83 @@ and to start the client:
 $ cargo run --bin cli-crusty
 ```
 
-Now, from the client, you can interact with the server. Create a database named
-'testdb':
+Now, from the client, you can interact with the server. Create a database named `testdb`:
 
 ```
-[crustydb]>> \r testdb 
+[crustydb]>> \r testdb
 ```
 
-Then, connect to the newly created database:
+Then connect to the newly created database:
 
 ```
 [crustydb]>> \c testdb
 ```
 
-At this point, you can create a table 'test' in the 'testdb' database you are
-connected to by writing the appropriate SQL command. Let's create a table with 2
-Integer columns, which we are going to name 'a' and 'b'.
+Create a table with 2 integer columns, named `a` and `b`:
 
 ```
 [crustydb]>> CREATE TABLE test (a INT, b INT, primary key (a));
 ```
 
-At this point the table exists in the database, but it does not contain any data. We include a CSV file in the repository (named 'data.csv') with some sample data you can import into the newly created table. You can do that by doing:
+The table exists but doesn't contain any data yet. The repository includes a sample CSV file (`data.csv`) you can import:
 
 ```
 [crustydb]>> \i <PATH>/data.csv test
 ```
 
-Note that you need to replace PATH with the path to the repository where the
-data.csv file lives.
+(Replace `<PATH>` with the path to wherever `data.csv` lives in the repository.)
 
-After importing the data, you can run basic SQL queries on the table. For
-example:
+Now run some SQL against it:
 
 ```
 [crustydb]>> SELECT a FROM test;
-```
-
-or:
-
-```
 [crustydb]>> SELECT sum(a), sum(b) FROM test;
 ```
 
-As you follow through this end to end example, we encourage you to take a look
-at the log messages emitted by the server. You can search for those log messages
-in the code: that is a great way of understanding the lifecycle of query
-execution in crustydb.
+Create a secondary index and confirm it's used automatically for a selective lookup:
 
-### Client Scripts 
-
-The client has an option of running a series of commands/queries from a text file. 
-Each command or query must be separated by a ; (even commands that would not give 
-a ; after when using the cli tool). To use the script pass `-- -s [script file]` 
-
-We have included a sample script that you would invoke the following way:
 ```
-cargo run -p cli-crusty -- -s test-client-script
+[crustydb]>> CREATE INDEX idx_test_b ON test (b);
+[crustydb]>> SELECT * FROM test WHERE b = 2;
+```
+
+Update and delete rows — the index above stays consistent automatically:
+
+```
+[crustydb]>> UPDATE test SET b = 100 WHERE a = 1;
+[crustydb]>> DELETE FROM test WHERE a = 2;
+```
+
+As you follow through this example, it's worth watching the server's log messages (`RUST_LOG=debug cargo run --bin server`) — that's a good way to see the lifecycle of query planning and execution in CrustyDB, including which physical plan the optimizer picked.
+
+### Client Scripts
+
+The client can run a series of commands/queries from a text file. Each command or query must be separated by a `;` (even commands that wouldn't normally need one when using the CLI interactively). To use a script, pass `-- -s [script file]`:
+
+```
+cargo run -p cli-crusty -- -s [script file]
 ```
 
 ### Shutdown
 
-Note that shutting down the server is not automatic. You will need to
-manually shut down the server by sending a \shutdown command from the client
-or pressing Ctrl-C in the client terminal (Ctrl-D will disconnect the client but leave the server running).
-This allows for a clean shutdown of the server and the database.
+Shutting down the server is not automatic. You need to manually shut it down with `\shutdown` from the client, or Ctrl-C in the client terminal (Ctrl-D disconnects the client but leaves the server running). This allows for a clean shutdown of the server and the database.
 
-A non-clean shutdown of the server will likely leave the database in an inconsistent state.
-You will need to clean the database by removing the `crusty_data` directory
-and re-running the server (`rm -rf crusty_data/`). 
+A non-clean shutdown will likely leave the database in an inconsistent state. You'll need to clean the database by removing the `crusty_data` directory and re-running the server (`rm -rf crusty_data/`).
 
-## (Reminder from Primer) Debugging Rust Programs
+## Debugging Rust Programs
 
-Debugging is a crucial skill you should learn (if you don't know yet) in order
-to become a more effective software developer. If you write software, your
-software will contain bugs. Debugging is the process of finding those bugs,
-which is necessary if you want to fix them.
+Debugging is a crucial skill for any software developer. If you write software, your software will contain bugs — debugging is the process of finding those bugs so you can fix them.
 
 ### Debuggers
 
-There are tools to help you debug software called debuggers. You may
-have already heard about these. For example, in the C, C++ world, gdb and lldb
-are two popular debuggers. gdb is used to debug programs that have been compiled
-with gcc, while lldb is used to debug programs compiled with the LLVM toolkit.
-What this means in practice, in 2020, is that if you work on a Linux platform,
-you'll likely be using gdb. If you work on a Mac OS platform, you'll likely be
-using lldb. If you work on a windows platform, then you may be using either one,
-depending on your configuration.
+There are tools to help you debug software called debuggers. In the C/C++ world, `gdb` and `lldb` are the two popular ones: `gdb` is typically used on Linux, `lldb` on macOS, and either on Windows depending on your setup.
 
 ### Debuggers in the IDE
 
-A popular way of writing software is via IDEs (which we recommend you use to
-develop crustyDB). IDEs for most languages come with a debugger preconfigured.
-The situation for Rust is a little different. Only relatively recently IDE
-developers have started incorporating debuggers for Rust, and the support is
-still sparse. If you use Visual Studio Code (a lightweight and open source IDE),
-you will be able to use a Rust debugger (based on gdb or lldb depending on the
-underlying platform). You can easily find instructions online on how to set this
-up.
+If you use Visual Studio Code, you can use a Rust debugger (based on `gdb` or `lldb` depending on platform) — instructions are easy to find online.
 
-Most other free IDEs do not have good support for the Rust debugger yet.
-
-#### CLion
-
-JetBrain's [CLion](https://www.jetbrains.com/clion/) IDE looks to have a solid Rust debugger with the Rust extension.
-However CLion is not free, but it does offer academic licenses. [Apply here](https://www.jetbrains.com/community/education/#students)
-if you want to access the tool (some restrictions on what you can use the tool for).
-[Here are instructions on set up and using](https://blog.jetbrains.com/clion/2019/10/debugging-rust-code-in-clion/)
-which worked for me out of the box on Ubuntu (with installing the Rust plugin).
-One of our TAs uses CLion to debug Rust on OSX. The link also contains instructions for 
-debugging on Windows, but it has not been tested by us.
-
-#### VSCode
-
-We have had some mixed success with using VSCode for debugging Rust
-(although it is a great Rust IDE with the right extensions).  Using the
-extensions Rust and CodeLLDB on Ubuntu has gotten debugging working on a set up.
-We included the launch.json for running tests in a package.
+JetBrains' [CLion](https://www.jetbrains.com/clion/) has solid Rust debugger support with the Rust plugin installed; it's not free, but offers free licenses for students and open-source maintainers.
 
 ### Alternative ways of debugging programs
 
-You are already familiar with printing the values of variables in your programs
-in order to understand program behavior and detect problems, i.e., in order to
-debug your programs. Rust has its own println!() macro (and Crusty uses a
-logging library). Rust also has a dbg!()
-macro in its standard library, which will simply format the argument so its
-printable along with the line where it's found.  A real debugger will give you
-much more information, presented better, and in context, so it's a much more
-powerful way of debugging programs, and the recommended way. However, in some
-instances, the macros above may come in handy, especially as Rust's debuggers
-support matures.
+Beyond a full debugger, Rust's `println!()` macro (and CrustyDB's logging, see above) and the standard library's `dbg!()` macro (which prints an expression's value along with the file/line it's found at) are simple, effective ways to inspect program behavior — especially useful for quick checks even when a full debugger is available.

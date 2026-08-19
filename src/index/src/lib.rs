@@ -4,11 +4,11 @@ use storage::StorageManager;
 use txn_manager::mock_tm::MockTransactionManager as TransactionManager;
 
 // pub use hash::HashIndex;
-pub use index_manager::IndexManager;
-//pub use tree::TreeIndex;
+pub use index_manager::{IndexId, IndexManager};
+pub use tree::TreeIndex;
 
 //mod hash;
 mod index_manager;
-//mod tree;
+mod tree;
 
 //pub mod index_trait;
